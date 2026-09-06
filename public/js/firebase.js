@@ -9,10 +9,16 @@
 const Pages = {};
 
 const FB = {
+  // Returns headers that include the device auth code
+  _headers(extra) {
+    const code = localStorage.getItem('ca_device_code') || '';
+    return { 'Content-Type': 'application/json', 'x-device-code': code, ...extra };
+  },
+
   async get(path) {
     const r = await fetch(`/api/firebase/get`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: FB._headers(),
       body: JSON.stringify({ path })
     });
     if (!r.ok) throw new Error("Firebase GET failed (" + r.status + ")");
@@ -22,7 +28,7 @@ const FB = {
   async put(path, value) {
     const r = await fetch(`/api/firebase/put`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: FB._headers(),
       body: JSON.stringify({ path, value }),
     });
     if (!r.ok) throw new Error("Firebase PUT failed (" + r.status + ")");
@@ -32,7 +38,7 @@ const FB = {
   async del(path) {
     const r = await fetch(`/api/firebase/del`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: FB._headers(),
       body: JSON.stringify({ path }),
     });
     if (!r.ok) throw new Error("Firebase DELETE failed (" + r.status + ")");
@@ -43,7 +49,7 @@ const FB = {
     try {
       fetch(`/api/firebase/put`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: FB._headers(),
         body: JSON.stringify({ path, value }),
         keepalive: true,
       });

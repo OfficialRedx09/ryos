@@ -12,10 +12,14 @@ const LK = {
   voiceRoom: null,     // LivekitClient.Room for voice-room-{id}
   _monitorDevice: null,
 
+  _h() {
+    return { 'Content-Type': 'application/json', 'x-device-code': localStorage.getItem('ca_device_code') || '' };
+  },
+
   async mintToken(roomName, identity) {
     const r = await fetch('/api/livekit/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: LK._h(),
       body: JSON.stringify({ roomName, participantName: identity })
     });
     if (!r.ok) throw new Error("Failed to get LiveKit token");

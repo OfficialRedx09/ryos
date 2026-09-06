@@ -7,10 +7,14 @@
    ═══════════════════════════════════════════════════════════════ */
 
 const R2 = {
+  _h() {
+    return { 'x-device-code': localStorage.getItem('ca_device_code') || '' };
+  },
+
   async getPubUrl() {
     if (R2._pubUrl) return R2._pubUrl;
     try {
-      const r = await fetch('/api/r2/puburl');
+      const r = await fetch('/api/r2/puburl', { headers: R2._h() });
       if (r.ok) {
         const data = await r.json();
         R2._pubUrl = data.url;
@@ -37,7 +41,9 @@ const R2 = {
   },
 
   async list(prefix) {
-    const r = await fetch(`/api/r2/list?prefix=${encodeURIComponent(prefix)}`);
+    const r = await fetch(`/api/r2/list?prefix=${encodeURIComponent(prefix)}`, {
+      headers: R2._h()
+    });
     if (!r.ok) throw new Error("R2 list failed (" + r.status + ")");
     const data = await r.json();
     if (!data.Contents) return [];
@@ -52,3 +58,4 @@ const R2 = {
     return items;
   },
 };
+

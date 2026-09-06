@@ -9,7 +9,10 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+const DIST_DIR = path.join(__dirname, 'dist');
+const PUBLIC_DIR = fs.existsSync(DIST_DIR) ? DIST_DIR : path.join(__dirname, 'public');
+
+app.use(express.static(PUBLIC_DIR));
 
 // Configuration management
 const CONFIG_FILE = path.join(__dirname, 'config.json');
@@ -49,18 +52,53 @@ app.post('/api/auth', async (req, res) => {
   
   try {
     const response = await fetch(ADMIN_DB);
-    const users = await response.json();
+    const users = await (response.json().catch(() => ({}))) || {};
     
-    if (users && users[code]) {
-      // 'admin' or 'client'
+    if (users[code]) {
       res.json({ role: users[code] });
     } else {
-      res.json({ role: 'unauthorized' });
+      // Auto-register as client
+      const putRes = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/User/${code}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify('client')
+      });
+      if (!putRes.ok) throw new Error('Failed to auto-register');
+      res.json({ role: 'client' });
     }
   } catch (error) {
     res.status(500).json({ error: 'Auth check failed' });
   }
 });
+
+// Cache auth checks to prevent hammering Firebase
+const authCache = new Map(); 
+
+// Middleware for general API access (both admin and client)
+async function checkAuth(req, res, next) {
+  const code = req.headers['x-device-code'];
+  if (!code) return res.status(401).json({ error: 'Unauthorized' });
+  
+  const cached = authCache.get(code);
+  if (cached && Date.now() - cached.time < 60000) {
+    req.userRole = cached.role;
+    return next();
+  }
+
+  try {
+    const response = await fetch(ADMIN_DB);
+    const users = await (response.json().catch(() => ({}))) || {};
+    if (users[code] === 'admin' || users[code] === 'client') {
+      authCache.set(code, { role: users[code], time: Date.now() });
+      req.userRole = users[code];
+      next();
+    } else {
+      res.status(403).json({ error: 'Forbidden' });
+    }
+  } catch(e) {
+    res.status(500).json({ error: 'Auth error' });
+  }
+}
 
 // Middleware to protect admin routes
 async function checkAdmin(req, res, next) {
@@ -91,7 +129,7 @@ app.post('/api/config', checkAdmin, (req, res) => {
 });
 
 // Firebase Proxy
-app.post('/api/firebase/get', async (req, res) => {
+app.post('/api/firebase/get', checkAuth, async (req, res) => {
   const { path } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
@@ -104,7 +142,7 @@ app.post('/api/firebase/get', async (req, res) => {
   }
 });
 
-app.post('/api/firebase/put', async (req, res) => {
+app.post('/api/firebase/put', checkAuth, async (req, res) => {
   const { path, value } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
@@ -121,7 +159,7 @@ app.post('/api/firebase/put', async (req, res) => {
   }
 });
 
-app.post('/api/firebase/del', async (req, res) => {
+app.post('/api/firebase/del', checkAuth, async (req, res) => {
   const { path } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
@@ -134,7 +172,7 @@ app.post('/api/firebase/del', async (req, res) => {
 });
 
 // LiveKit Token Route
-app.post('/api/livekit/token', (req, res) => {
+app.post('/api/livekit/token', checkAuth, (req, res) => {
   const { roomName, participantName } = req.body;
   if (!config.LIVEKIT_API_KEY || !config.LIVEKIT_API_SECRET || !config.LIVEKIT_WS_URL) {
     return res.status(400).json({ error: 'LiveKit not configured on server' });
@@ -167,7 +205,7 @@ function getS3Client() {
 }
 
 // R2 Proxy Routes
-app.get('/api/r2/list', async (req, res) => {
+app.get('/api/r2/list', checkAuth, async (req, res) => {
   const prefix = req.query.prefix || '';
   const s3 = getS3Client();
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
@@ -181,7 +219,7 @@ app.get('/api/r2/list', async (req, res) => {
   }
 });
 
-app.post('/api/r2/presign-put', async (req, res) => {
+app.post('/api/r2/presign-put', checkAuth, async (req, res) => {
   const { key, contentType } = req.body;
   const s3 = getS3Client();
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
@@ -195,19 +233,16 @@ app.post('/api/r2/presign-put', async (req, res) => {
   }
 });
 
-app.post('/api/r2/presign-get', async (req, res) => {
+app.post('/api/r2/presign-get', checkAuth, async (req, res) => {
   const { key } = req.body;
   const s3 = getS3Client();
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   
   try {
-    // We can't import GetObjectCommand dynamically here without adding it to the require list.
-    // So let's just rely on the public URL or we need to add GetObjectCommand.
-    // I will add GetObjectCommand to the require list.
   } catch(e) {}
 });
 
-app.post('/api/r2/delete', async (req, res) => {
+app.post('/api/r2/delete', checkAuth, async (req, res) => {
   const { key } = req.body;
   const s3 = getS3Client();
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
@@ -221,13 +256,23 @@ app.post('/api/r2/delete', async (req, res) => {
   }
 });
 
-app.get('/api/r2/puburl', (req, res) => {
+app.get('/api/r2/puburl', checkAuth, (req, res) => {
   res.json({ url: config.R2_PUB });
 });
 
 // Fallback for HTML5 history
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const filePath = path.join(PUBLIC_DIR, 'index.html');
+  res.sendFile(filePath, err => {
+    if (err) {
+      console.error("Error serving index.html:", err.message);
+      if (err.code === 'ENOENT') {
+        res.status(404).send("<h2>404 Not Found</h2><p>The <code>index.html</code> file is missing.</p>");
+      } else {
+        res.status(err.status).end();
+      }
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3000;
