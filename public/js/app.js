@@ -523,6 +523,107 @@ const App = {
     App._unlock();
   },
 
+  // ─── 6-digit connection key screen ───
+  _showSixDigitKeyScreen() {
+    document.getElementById("app").classList.add("hidden");
+    const pinlock = document.getElementById("pinlock");
+    pinlock.classList.remove("hidden");
+
+    // Temporarily replace pin card content with 6-digit key UI
+    pinlock.innerHTML = `
+      <div class="pin-card" id="six-key-card">
+        <div class="pin-logo"><span class="material-symbols-rounded" style="font-size:48px;color:var(--accent)">vpn_key</span></div>
+        <h2 class="pin-title" id="six-key-title">Connection Key</h2>
+        <p class="pin-sub" id="six-key-sub">Enter your 6-digit connection key to continue</p>
+        <p id="six-key-error" style="color:#ef4444;font-size:13px;min-height:18px;text-align:center;margin:0 0 8px;"></p>
+        <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px;">
+          <input id="six-key-input" type="password" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+            style="width:160px;padding:12px 16px;font-size:22px;font-weight:700;letter-spacing:6px;text-align:center;border-radius:12px;border:2px solid var(--border);background:var(--bg2);color:var(--text);outline:none;"
+            placeholder="••••••">
+        </div>
+        <button id="six-key-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;border-radius:12px;">
+          Unlock
+        </button>
+        <p style="margin-top:14px;font-size:12px;color:var(--text-dim);text-align:center;">
+          This key links your device to the monitoring network
+        </p>
+      </div>
+    `;
+
+    const input = document.getElementById("six-key-input");
+    const btn = document.getElementById("six-key-btn");
+    const err = document.getElementById("six-key-error");
+    const card = document.getElementById("six-key-card");
+    let fails = 0;
+
+    setTimeout(() => input.focus(), 100);
+
+    const verify = async () => {
+      const pin = input.value.trim();
+      if (pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+        err.textContent = "Please enter a valid 6-digit key";
+        card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-rounded spin">progress_activity</span> Verifying...';
+      err.textContent = "";
+
+      try {
+        const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`);
+        if (!r.ok) throw new Error("Network error");
+        const data = await r.json();
+
+        if (!data || !data.FIREBASE_DB_URL) throw new Error("Invalid connection key");
+
+        // Store the verified key
+        localStorage.setItem("ca_connection_key", pin);
+        App.toast("Connection key verified!", "ok");
+
+        // Restore pin lock UI and proceed
+        App._restorePinLockUi();
+        App.showPin(App.hasPin() ? "enter" : "create");
+      } catch(e) {
+        fails++;
+        err.textContent = fails >= 3 ? "Key incorrect — contact your admin" : "Incorrect connection key, try again";
+        card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+        input.value = "";
+        btn.disabled = false;
+        btn.innerHTML = "Unlock";
+      }
+    };
+
+    btn.onclick = verify;
+    input.onkeydown = e => { if (e.key === "Enter") verify(); };
+  },
+
+  // Restores the original pinlock HTML structure after the 6-digit screen
+  _restorePinLockUi() {
+    document.getElementById("pinlock").innerHTML = `
+      <div class="pin-card">
+        <div class="pin-logo"><img src="logo/logo.png" alt="logo" style="width:56px;height:56px;border-radius:14px;object-fit:cover;" onerror="this.style.display='none'"></div>
+        <h2 class="pin-title" id="pin-title">Locked</h2>
+        <p class="pin-sub" id="pin-sub">Enter your 4-digit PIN to unlock Ryos</p>
+        <p id="pin-error" style="color:#ef4444;font-size:13px;min-height:18px;text-align:center;margin:0 0 8px;"></p>
+        <div id="pin-dots">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div class="pin-pad">
+          ${[1,2,3,4,5,6,7,8,9,'clear',0,'back'].map(k => `
+            <button class="pin-key" data-key="${k}">
+              ${k === 'back' ? '<span class="material-symbols-rounded">backspace</span>' :
+                k === 'clear' ? '<span class="material-symbols-rounded">close</span>' : k}
+            </button>`).join('')}
+        </div>
+      </div>`;
+    // Re-attach pad listener
+    document.querySelector(".pin-pad").addEventListener("click", e => {
+      const b = e.target.closest(".pin-key");
+      if (b) { App._pinKey(b.dataset.key); App.playClick(); }
+    });
+  },
+
   _unlock() {
     document.getElementById("pinlock").classList.add("hidden");
     document.getElementById("app").classList.remove("hidden");
@@ -614,7 +715,13 @@ const App = {
           });
         }
         
-        App.showPin(App.hasPin() ? "enter" : "create");
+        // Check if 6-digit connection key is already verified
+        const hasConnectionKey = !!localStorage.getItem('ca_connection_key');
+        if (!hasConnectionKey) {
+          App._showSixDigitKeyScreen();
+        } else {
+          App.showPin(App.hasPin() ? "enter" : "create");
+        }
       } else {
         App.toast("Unauthorized. Code: " + code, "err");
         document.getElementById("view").innerHTML = `
