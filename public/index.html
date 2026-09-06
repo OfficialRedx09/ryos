@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d0a">
+  <title>Ryos — Control Center</title>
+  <link rel="icon" type="image/png" href="logo/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
+    rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+</head>
+
+<body>
+  <!-- ══════════ Loading screen ══════════ -->
+  <div id="loader" class="loader" style="display:flex; align-items:center; justify-content:center; gap:24px;">
+    <div class="uiverse-loader">
+      <svg viewBox="0 0 80 80">
+        <circle r="32" cy="40" cx="40" id="test"></circle>
+      </svg>
+    </div>
+    <div class="uiverse-loader triangle">
+      <svg viewBox="0 0 86 80">
+        <polygon points="43 8 79 72 7 72"></polygon>
+      </svg>
+    </div>
+    <div class="uiverse-loader">
+      <svg viewBox="0 0 80 80">
+        <rect height="64" width="64" y="8" x="8"></rect>
+      </svg>
+    </div>
+  </div>
+
+  <!-- ══════════ Role Selection ══════════ -->
+  <div id="role-selection" class="loader hidden" style="background: var(--bg); z-index: 100;">
+    <div class="loader-inner" style="width: calc(100% - 20px); max-width: 420px; text-align: center; padding: 24px;">
+      <h2 style="margin-bottom: 24px;">Select your role</h2>
+
+      <div id="role-options" style="display: flex; flex-direction: column; gap: 16px;">
+        <button class="btn btn-primary btn-block" id="role-client" style="padding: 16px;">
+          I am a client, want to download client app
+        </button>
+        <button class="btn btn-ghost btn-block" id="role-parent" style="padding: 16px;">
+          I am a parent, want to control the device
+        </button>
+      </div>
+
+      <div id="role-client-download" class="hidden" style="margin-top: 24px;">
+        <p style="margin-bottom: 16px; color: var(--text-faint);">Download the client app using the link below:</p>
+        <div
+          style="display: flex; gap: 8px; justify-content: center; align-items: center; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+          <code style="font-size: 16px; color: var(--primary);">http://tiny.cc/open</code>
+          <button class="btn btn-icon btn-ghost" id="role-copy-link"><span
+              class="material-symbols-rounded">content_copy</span></button>
+        </div>
+        <button class="btn btn-ghost" id="role-back">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ Setup Wizard ══════════ -->
+  <div id="setup-wizard" class="loader hidden" style="background: var(--bg); z-index: 99;">
+    <div class="loader-inner" style="width: calc(100% - 20px); max-width: 420px; text-align: left; padding: 24px;">
+      <!-- Steps -->
+      <div id="wizard-step-0" class="wizard-step">
+        <p style="color: var(--text-faint); margin-bottom: 20px; font-size: 14px;">Enter your 6-digit PIN to login.</p>
+        <div class="pin-input-group" style="display: flex; gap: 8px; justify-content: center; margin-bottom: 24px;">
+          <input type="text" id="wiz-pin-input" class="form-input text-center wiz-pin" maxlength="6"
+            placeholder="------" autocomplete="off" inputmode="numeric" />
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center;">
+          <button class="btn btn-primary btn-block" id="wiz-btn-pin" style="width: 100%;">Login</button>
+          <span style="color: var(--text-faint); font-size: 12px;">OR</span>
+          <button class="btn btn-ghost" id="wiz-btn-manual" style="width: 100%;">Setup Manually</button>
+        </div>
+      </div>
+
+      <div id="wizard-step-1" class="wizard-step hidden">
+        <h3 style="margin-bottom: 12px; font-size: 16px;"><span class="material-symbols-rounded">database</span>
+          Firebase DB</h3>
+        <label class="form-label">Database URL</label>
+        <input type="text" id="wiz-fb-url" class="form-input" placeholder="https://my-app.firebaseio.com">
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button class="btn btn-ghost" id="wiz-back-1">Back</button>
+          <button class="btn btn-primary" style="flex:1;" id="wiz-btn-1">Next</button>
+        </div>
+      </div>
+
+      <div id="wizard-step-2" class="wizard-step hidden">
+        <h3 style="margin-bottom: 12px; font-size: 16px;"><span class="material-symbols-rounded">videocam</span> LiveKit
+        </h3>
+        <label class="form-label">WebSocket URL</label>
+        <input type="text" id="wiz-lk-url" class="form-input" placeholder="wss://web-xxxxx.livekit.cloud">
+        <label class="form-label" style="margin-top: 12px;">API Key</label>
+        <input type="text" id="wiz-lk-key" class="form-input" placeholder="API Key">
+        <label class="form-label" style="margin-top: 12px;">API Secret</label>
+        <input type="password" id="wiz-lk-secret" class="form-input" placeholder="API Secret">
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button class="btn btn-ghost" id="wiz-back-2">Back</button>
+          <button class="btn btn-primary" style="flex:1;" id="wiz-btn-2">Next</button>
+        </div>
+      </div>
+
+      <div id="wizard-step-3" class="wizard-step hidden">
+        <h3 style="margin-bottom: 12px; font-size: 16px;"><span class="material-symbols-rounded">cloud</span> Cloudflare
+          R2</h3>
+        <label class="form-label">Host URL</label>
+        <input type="text" id="wiz-r2-host" class="form-input" placeholder="xxxx.r2.cloudflarestorage.com">
+        <label class="form-label" style="margin-top: 12px;">Public URL (Optional)</label>
+        <input type="text" id="wiz-r2-pub" class="form-input" placeholder="https://pub-xxxx.r2.dev">
+        <label class="form-label" style="margin-top: 12px;">Access Key</label>
+        <input type="text" id="wiz-r2-access" class="form-input" placeholder="32-char Access Key">
+        <label class="form-label" style="margin-top: 12px;">Secret Key</label>
+        <input type="password" id="wiz-r2-secret" class="form-input" placeholder="64-char Secret Key">
+        <div style="display: flex; gap: 8px; margin-top: 16px;">
+          <button class="btn btn-ghost" id="wiz-back-3">Back</button>
+          <button class="btn btn-primary" style="flex:1;" id="wiz-btn-3">Finish & Generate Code</button>
+        </div>
+      </div>
+
+      <div id="wizard-step-done" class="wizard-step hidden" style="text-align: center;">
+        <span class="material-symbols-rounded"
+          style="font-size: 48px; color: #4CAF50; margin-bottom: 16px;">check_circle</span>
+        <h3 style="margin-bottom: 12px; font-size: 16px;">Setup Complete!</h3>
+        <p style="color: var(--text-faint); margin-bottom: 16px; font-size: 14px;">Enter this 6-digit code in the
+          Android App:</p>
+        <div id="wiz-code"
+          style="font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; letter-spacing: 4px; background: rgba(0,0,0,0.2); padding: 16px; border-radius: 12px; margin-bottom: 24px;">
+          ------</div>
+        <button class="btn btn-primary btn-block" id="wiz-btn-done">Open Dashboard</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════ PIN lock ══════════ -->
+  <div id="pinlock" class="pinlock hidden">
+    <div class="pin-card">
+      <div class="pin-brand">
+        <div class="pin-brand-icon"><img src="logo/logo.png" alt="Ryos Logo"
+            style="width: 42px; height: 42px; object-fit: contain; border-radius: 50%;"></div>
+        <div class="pin-brand-ring"></div>
+      </div>
+      <h2 id="pin-title" class="pin-title">Locked</h2>
+      <p id="pin-sub" class="pin-sub">Enter your 4-digit PIN to unlock Ryos</p>
+      <div id="pin-dots" class="pin-dots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <p id="pin-error" class="pin-error"></p>
+      <div class="pin-pad">
+        <button class="pin-key" data-key="1">1</button>
+        <button class="pin-key" data-key="2">2</button>
+        <button class="pin-key" data-key="3">3</button>
+        <button class="pin-key" data-key="4">4</button>
+        <button class="pin-key" data-key="5">5</button>
+        <button class="pin-key" data-key="6">6</button>
+        <button class="pin-key" data-key="7">7</button>
+        <button class="pin-key" data-key="8">8</button>
+        <button class="pin-key" data-key="9">9</button>
+        <button class="pin-key pin-key-fn" data-key="clear"><span class="material-symbols-rounded">close</span></button>
+        <button class="pin-key" data-key="0">0</button>
+        <button class="pin-key pin-key-fn" data-key="back"><span
+            class="material-symbols-rounded">backspace</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ App shell ══════════ -->
+  <div id="app" class="app hidden">
+
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon-wrap"><img src="logo/logo.png" alt="Ryos Logo"
+            style="width: 42px; height: 42px; object-fit: cover; border-radius: 50%;"></div>
+        <div>
+          <div class="brand-name">Ryos</div>
+        </div>
+      </div>
+      <nav id="side-nav" class="side-nav"></nav>
+      <button id="lock-btn-side" class="btn btn-ghost sidebar-lock">
+        <span class="material-symbols-rounded">lock</span> Lock app
+      </button>
+    </aside>
+
+    <div class="main-wrap">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="page-title" class="page-title">Devices</h1>
+        </div>
+        <div class="topbar-right">
+          <div id="device-status" class="device-status hidden">
+            <span id="device-dot" class="dot dot-off"></span>
+            <span id="device-status-text">offline</span>
+          </div>
+          <div id="topbar-batteries" style="display:flex; align-items:center; gap:8px; margin-right:8px;"></div>
+          <button id="config-btn-top" class="btn btn-icon btn-ghost" title="API Configuration">
+            <span class="material-symbols-rounded">settings</span>
+          </button>
+          <button id="lock-btn-top" class="btn btn-icon btn-ghost" title="Lock app">
+            <span class="material-symbols-rounded">lock</span>
+          </button>
+        </div>
+      </header>
+      <main id="view" class="view"></main>
+    </div>
+
+    <nav id="bottomnav" class="bottomnav"></nav>
+
+    <!-- "More" sheet (mobile) -->
+    <div id="moresheet" class="sheet-overlay hidden">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <h3 class="sheet-title">More</h3>
+        <div id="moresheet-items" class="sheet-items"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="modal-root"></div>
+  <div id="page-transition" class="page-transition hidden"></div>
+
+  <script src="js/firebase.js"></script>
+  <script src="js/r2.js"></script>
+  <script src="js/livekit.js"></script>
+  <script src="js/pages/devices.js"></script>
+  <script src="js/pages/overview.js"></script>
+  <script src="js/pages/notifications.js"></script>
+  <script src="js/pages/messages.js"></script>
+  <script src="js/pages/live.js"></script>
+  <script src="js/pages/actions.js"></script>
+  <script src="js/pages/files.js"></script>
+  <script src="js/pages/media.js"></script>
+  <script src="js/pages/settings.js"></script>
+  <script src="js/app.js"></script>
+
+  <script>
+    // Register Service Worker for caching fonts and assets
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => {
+          console.error('Service Worker registration failed:', err);
+        });
+      });
+    }
+  </script>
+</body>
+
+</html>
