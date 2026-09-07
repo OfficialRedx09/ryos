@@ -476,11 +476,13 @@ button,
 
 .sidebar-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 11px;
+  gap: 6px;
   padding: 6px 10px 18px;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--stroke);
+  text-align: center;
 }
 
 .brand-icon-wrap {
@@ -497,6 +499,10 @@ button,
 
 .brand-icon-wrap .material-symbols-rounded {
   font-size: 20px;
+}
+
+.sidebar .material-symbols-rounded {
+  font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 24;
 }
 
 .brand-name {
@@ -2004,6 +2010,67 @@ select.input option {
   font-size: 24px;
 }
 
+.battery-live-icon {
+  position: relative;
+  overflow: visible;
+  border-radius: 9px !important;
+  background: transparent !important;
+  color: var(--battery-color);
+  animation: batteryIconPulse 2.4s ease-in-out infinite;
+}
+
+.battery-live-icon svg {
+  position: absolute;
+  inset: 0;
+  width: 44px;
+  height: 44px;
+}
+
+.battery-body,
+.battery-terminal {
+  fill: none;
+  stroke: var(--battery-color);
+  stroke-width: 2;
+}
+
+.battery-terminal {
+  fill: var(--battery-color);
+}
+
+.battery-fill {
+  fill: var(--battery-color);
+  stroke: var(--battery-color);
+  stroke-width: 0;
+  transition: width 0.7s ease, fill 0.25s ease;
+  filter: drop-shadow(0 0 2px var(--battery-color));
+}
+
+.battery-icon-value {
+  position: relative;
+  z-index: 1;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.battery-live-icon.is-empty {
+  --battery-color: var(--text-faint) !important;
+  animation: none;
+}
+
+@keyframes batteryIconPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--battery-color) 0%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--battery-color) 16%, transparent);
+  }
+}
+
 .cc-widget.active .cc-icon {
   background: var(--accent);
   color: var(--accent-ink);
@@ -2764,7 +2831,8 @@ select.input option {
 
 .app.sidebar-collapsed .sidebar-brand {
   justify-content: center;
-  padding: 12px 0;
+  align-items: center;
+  display: flex;
 }
 
 .app.sidebar-collapsed .brand-name,

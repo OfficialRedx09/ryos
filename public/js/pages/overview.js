@@ -6,7 +6,14 @@ Pages.overview = {
     root.innerHTML = `
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px;">
         <div class="cc-widget">
-          <div class="cc-icon" style="background:#34c759;"><span class="material-symbols-rounded">battery_charging_full</span></div>
+          <div class="cc-icon battery-live-icon" id="ov-battery-icon" style="--battery-color:#34c759;" aria-label="Battery status">
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              <rect class="battery-body" x="4" y="7" width="27" height="22" rx="4"></rect>
+              <rect class="battery-terminal" x="31" y="13" width="3" height="10" rx="1.5"></rect>
+              <rect class="battery-fill" id="ov-battery-progress" x="6.5" y="9.5" width="0" height="17" rx="2"></rect>
+            </svg>
+            <span class="battery-icon-value" id="ov-battery-icon-value">…</span>
+          </div>
           <div>
             <div style="font-size:28px; font-weight:700; font-family:'JetBrains Mono', monospace;" id="ov-batt">…</div>
             <div class="cc-title" style="color:var(--text-dim); padding-top:4px;">Battery</div>
@@ -62,7 +69,19 @@ Pages.overview = {
 
     const online = U.isOnline(hb);
     const seen = U.parseHeartbeat(hb);
-    document.getElementById("ov-batt").textContent = batt || "—";
+    const battValue = Number.parseInt((batt ?? "").toString().replace("%", ""), 10);
+    const hasBattery = Number.isFinite(battValue);
+    const batteryPercent = hasBattery ? Math.max(0, Math.min(100, battValue)) : null;
+    document.getElementById("ov-batt").textContent = batteryPercent === null ? "—" : `${batteryPercent}%`;
+    const batteryIcon = document.getElementById("ov-battery-icon");
+    const batteryProgress = document.getElementById("ov-battery-progress");
+    const batteryIconValue = document.getElementById("ov-battery-icon-value");
+    if (batteryIcon && batteryProgress && batteryIconValue) {
+      batteryIcon.classList.toggle("is-empty", batteryPercent === null);
+      batteryIconValue.textContent = batteryPercent === null ? "—" : `${batteryPercent}%`;
+      batteryProgress.setAttribute("width", batteryPercent === null ? "0" : `${21 * batteryPercent / 100}`);
+      batteryIcon.setAttribute("aria-label", batteryPercent === null ? "Battery unavailable" : `Battery ${batteryPercent}%`);
+    }
     document.getElementById("ov-status").textContent = online ? "Online" : "Offline";
     document.getElementById("ov-seen").textContent = "Seen " + U.timeAgo(seen);
     
