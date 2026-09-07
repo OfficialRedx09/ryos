@@ -24,7 +24,6 @@ let config = {
   LIVEKIT_API_KEY: '',
   LIVEKIT_API_SECRET: '',
   R2_HOST: '',
-  R2_PUB: '',
   R2_ACCESS_KEY: '',
   R2_SECRET_KEY: '',
   R2_BUCKET: 'files'
@@ -41,6 +40,31 @@ if (fs.existsSync(CONFIG_FILE)) {
 
 function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+const apiCache = new Map();
+
+async function getClientConfig(req) {
+  const pin = req.headers['x-connection-key'];
+  if (!pin) return config;
+
+  const cached = apiCache.get(pin);
+  if (cached && Date.now() - cached.time < 300000) {
+    return cached.data;
+  }
+
+  try {
+    const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`);
+    const data = await r.json();
+    if (data && data.FIREBASE_DB_URL) {
+      apiCache.set(pin, { data, time: Date.now() });
+      return data;
+    }
+  } catch(e) {
+    console.error(`Failed to fetch config for pin ${pin}`, e);
+  }
+  
+  return config;
 }
 
 // Authentication / Role Check
@@ -118,22 +142,43 @@ async function checkAdmin(req, res, next) {
 }
 
 // Admin Config Routes
-app.get('/api/config', checkAdmin, (req, res) => {
-  res.json(config);
+app.get('/api/config', checkAdmin, async (req, res) => {
+  const cfg = await getClientConfig(req);
+  res.json(cfg);
 });
 
-app.post('/api/config', checkAdmin, (req, res) => {
-  config = { ...config, ...req.body };
-  saveConfig();
-  res.json({ success: true });
+app.post('/api/config', checkAdmin, async (req, res) => {
+  const pin = req.headers['x-connection-key'];
+  if (!pin) {
+    config = { ...config, ...req.body };
+    saveConfig();
+    return res.json({ success: true });
+  }
+  
+  try {
+    const cfg = await getClientConfig(req);
+    const newCfg = { ...cfg, ...req.body };
+    const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCfg)
+    });
+    if (!r.ok) throw new Error("Failed to save to Firebase");
+    
+    apiCache.set(pin, { data: newCfg, time: Date.now() });
+    res.json({ success: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Firebase Proxy
 app.post('/api/firebase/get', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { path } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
-    const r = await fetch(`${config.FIREBASE_DB_URL}/${p}`);
+    const r = await fetch(`${cfg.FIREBASE_DB_URL}/${p}`);
     if (!r.ok) return res.status(r.status).json({ error: 'Firebase GET failed' });
     const data = await r.json();
     res.json(data);
@@ -143,10 +188,11 @@ app.post('/api/firebase/get', checkAuth, async (req, res) => {
 });
 
 app.post('/api/firebase/put', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { path, value } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
-    const r = await fetch(`${config.FIREBASE_DB_URL}/${p}`, {
+    const r = await fetch(`${cfg.FIREBASE_DB_URL}/${p}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(value)
@@ -160,10 +206,11 @@ app.post('/api/firebase/put', checkAuth, async (req, res) => {
 });
 
 app.post('/api/firebase/del', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { path } = req.body;
   const p = path.includes("?") ? path.replace("?", ".json?") : path + ".json";
   try {
-    const r = await fetch(`${config.FIREBASE_DB_URL}/${p}`, { method: 'DELETE' });
+    const r = await fetch(`${cfg.FIREBASE_DB_URL}/${p}`, { method: 'DELETE' });
     if (!r.ok) return res.status(r.status).json({ error: 'Firebase DELETE failed' });
     res.json({ success: true });
   } catch (e) {
@@ -172,46 +219,48 @@ app.post('/api/firebase/del', checkAuth, async (req, res) => {
 });
 
 // LiveKit Token Route
-app.post('/api/livekit/token', checkAuth, (req, res) => {
+app.post('/api/livekit/token', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { roomName, participantName } = req.body;
-  if (!config.LIVEKIT_API_KEY || !config.LIVEKIT_API_SECRET || !config.LIVEKIT_WS_URL) {
+  if (!cfg.LIVEKIT_API_KEY || !cfg.LIVEKIT_API_SECRET || !cfg.LIVEKIT_WS_URL) {
     return res.status(400).json({ error: 'LiveKit not configured on server' });
   }
 
-  const at = new AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET, {
+  const at = new AccessToken(cfg.LIVEKIT_API_KEY, cfg.LIVEKIT_API_SECRET, {
     identity: participantName || `admin-${Math.floor(Math.random()*10000)}`,
   });
   
   at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
 
   const token = at.toJwt();
-  res.json({ url: config.LIVEKIT_WS_URL, token });
+  res.json({ url: cfg.LIVEKIT_WS_URL, token });
 });
 
 // S3 / R2 Setup
-function getS3Client() {
-  if (!config.R2_HOST || !config.R2_ACCESS_KEY || !config.R2_SECRET_KEY) return null;
-  let endpoint = config.R2_HOST;
+function getS3Client(cfg) {
+  if (!cfg.R2_HOST || !cfg.R2_ACCESS_KEY || !cfg.R2_SECRET_KEY) return null;
+  let endpoint = cfg.R2_HOST;
   if (!endpoint.startsWith('http')) endpoint = 'https://' + endpoint;
   
   return new S3Client({
     region: 'auto',
     endpoint: endpoint,
     credentials: {
-      accessKeyId: config.R2_ACCESS_KEY,
-      secretAccessKey: config.R2_SECRET_KEY,
+      accessKeyId: cfg.R2_ACCESS_KEY,
+      secretAccessKey: cfg.R2_SECRET_KEY,
     }
   });
 }
 
 // R2 Proxy Routes
 app.get('/api/r2/list', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const prefix = req.query.prefix || '';
-  const s3 = getS3Client();
+  const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   
   try {
-    const cmd = new ListObjectsV2Command({ Bucket: config.R2_BUCKET, Prefix: prefix });
+    const cmd = new ListObjectsV2Command({ Bucket: cfg.R2_BUCKET, Prefix: prefix });
     const data = await s3.send(cmd);
     res.json(data);
   } catch (e) {
@@ -220,12 +269,13 @@ app.get('/api/r2/list', checkAuth, async (req, res) => {
 });
 
 app.post('/api/r2/presign-put', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { key, contentType } = req.body;
-  const s3 = getS3Client();
+  const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   
   try {
-    const cmd = new PutObjectCommand({ Bucket: config.R2_BUCKET, Key: key, ContentType: contentType });
+    const cmd = new PutObjectCommand({ Bucket: cfg.R2_BUCKET, Key: key, ContentType: contentType });
     const url = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
     res.json({ url });
   } catch (e) {
@@ -234,8 +284,9 @@ app.post('/api/r2/presign-put', checkAuth, async (req, res) => {
 });
 
 app.post('/api/r2/presign-get', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { key } = req.body;
-  const s3 = getS3Client();
+  const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   
   try {
@@ -243,21 +294,18 @@ app.post('/api/r2/presign-get', checkAuth, async (req, res) => {
 });
 
 app.post('/api/r2/delete', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
   const { key } = req.body;
-  const s3 = getS3Client();
+  const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   
   try {
-    const cmd = new DeleteObjectCommand({ Bucket: config.R2_BUCKET, Key: key });
+    const cmd = new DeleteObjectCommand({ Bucket: cfg.R2_BUCKET, Key: key });
     await s3.send(cmd);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-
-app.get('/api/r2/puburl', checkAuth, (req, res) => {
-  res.json({ url: config.R2_PUB });
 });
 
 // Fallback for HTML5 history

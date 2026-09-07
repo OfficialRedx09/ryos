@@ -12,7 +12,8 @@ const FB = {
   // Returns headers that include the device auth code
   _headers(extra) {
     const code = localStorage.getItem('ca_device_code') || '';
-    return { 'Content-Type': 'application/json', 'x-device-code': code, ...extra };
+    const conn = localStorage.getItem('ca_connection_key') || '';
+    return { 'Content-Type': 'application/json', 'x-device-code': code, 'x-connection-key': conn, ...extra };
   },
 
   async get(path) {

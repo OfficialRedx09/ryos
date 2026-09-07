@@ -41,9 +41,9 @@ Pages.settings = {
       <div class="section-label">Client App</div>
       <div class="card" style="display:flex;flex-direction:column;align-items:center;gap:16px;">
         <p style="text-align:center;color:var(--text-faint);font-size:14px;margin:0;">Scan to download or copy the link below.</p>
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://tiny.cc/open" alt="QR Code" style="width:150px;height:150px;border-radius:12px;background:#fff;padding:8px;" />
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://tiny.cc/ryos" alt="QR Code" style="width:150px;height:150px;border-radius:12px;background:#fff;padding:8px;" />
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:rgba(255,255,255,0.05);padding:12px;border-radius:8px;">
-          <code style="font-size:14px;color:var(--primary);">http://tiny.cc/open</code>
+          <code style="font-size:14px;color:var(--primary);">http://tiny.cc/ryos</code>
           <button class="btn btn-ghost btn-sm" id="st-copy-link"><span class="material-symbols-rounded">content_copy</span>Copy</button>
         </div>
       </div>
@@ -109,7 +109,7 @@ Pages.settings = {
     const copyLinkBtn = document.getElementById("st-copy-link");
     if (copyLinkBtn) {
       copyLinkBtn.onclick = () => {
-        navigator.clipboard?.writeText("http://tiny.cc/open").then(() => App.toast("Link copied", "ok"));
+        navigator.clipboard?.writeText("http://tiny.cc/ryos").then(() => App.toast("Link copied", "ok"));
       };
     }
 

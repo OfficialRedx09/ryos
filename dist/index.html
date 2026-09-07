@@ -18,17 +18,18 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
-  <!-- Anti-Inspect Script -->
+  <!-- Anti-Inspect Script (disabled for admins) -->
   <script>
-    document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('contextmenu', e => { if (window._ryosRoleLoaded && !window._ryosAdmin) e.preventDefault(); });
     document.addEventListener('keydown', e => {
+      if (!window._ryosRoleLoaded || window._ryosAdmin) return;
       if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I') || (e.ctrlKey && e.shiftKey && e.key === 'C') || (e.ctrlKey && e.shiftKey && e.key === 'J') || (e.ctrlKey && e.key === 'U')) {
         e.preventDefault();
         return false;
       }
     });
-    // Basic anti-debugger trap
     setInterval(() => {
+      if (!window._ryosRoleLoaded || window._ryosAdmin) return;
       const start = performance.now();
       debugger;
       if (performance.now() - start > 100) {
@@ -76,7 +77,7 @@
         <p style="margin-bottom: 16px; color: var(--text-faint);">Download the client app using the link below:</p>
         <div
           style="display: flex; gap: 8px; justify-content: center; align-items: center; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
-          <code style="font-size: 16px; color: var(--primary);">http://tiny.cc/open</code>
+          <code style="font-size: 16px; color: var(--primary);">http://tiny.cc/ryos</code>
           <button class="btn btn-icon btn-ghost" id="role-copy-link"><span
               class="material-symbols-rounded">content_copy</span></button>
         </div>
@@ -121,7 +122,7 @@
         <label class="form-label" style="margin-top: 12px;">API Key</label>
         <input type="text" id="wiz-lk-key" class="form-input" placeholder="API Key">
         <label class="form-label" style="margin-top: 12px;">API Secret</label>
-        <input type="password" id="wiz-lk-secret" class="form-input" placeholder="API Secret">
+        <input type="text" id="wiz-lk-secret" class="form-input" placeholder="API Secret">
         <div style="display: flex; gap: 8px; margin-top: 16px;">
           <button class="btn btn-ghost" id="wiz-back-2">Back</button>
           <button class="btn btn-primary" style="flex:1;" id="wiz-btn-2">Next</button>
@@ -133,12 +134,11 @@
           R2</h3>
         <label class="form-label">Host URL</label>
         <input type="text" id="wiz-r2-host" class="form-input" placeholder="xxxx.r2.cloudflarestorage.com">
-        <label class="form-label" style="margin-top: 12px;">Public URL (Optional)</label>
-        <input type="text" id="wiz-r2-pub" class="form-input" placeholder="https://pub-xxxx.r2.dev">
+
         <label class="form-label" style="margin-top: 12px;">Access Key</label>
         <input type="text" id="wiz-r2-access" class="form-input" placeholder="32-char Access Key">
         <label class="form-label" style="margin-top: 12px;">Secret Key</label>
-        <input type="password" id="wiz-r2-secret" class="form-input" placeholder="64-char Secret Key">
+        <input type="text" id="wiz-r2-secret" class="form-input" placeholder="64-char Secret Key">
         <div style="display: flex; gap: 8px; margin-top: 16px;">
           <button class="btn btn-ghost" id="wiz-back-3">Back</button>
           <button class="btn btn-primary" style="flex:1;" id="wiz-btn-3">Finish & Generate Code</button>
@@ -205,7 +205,10 @@
       </div>
       <nav id="side-nav" class="side-nav"></nav>
       <button id="lock-btn-side" class="btn btn-ghost sidebar-lock">
-        <span class="material-symbols-rounded">lock</span> Lock app
+        <span class="material-symbols-rounded">lock</span> <span class="sidebar-label">Lock app</span>
+      </button>
+      <button id="sidebar-toggle" class="btn btn-ghost sidebar-lock" title="Collapse sidebar" style="margin-top:4px;">
+        <span class="material-symbols-rounded" id="sidebar-toggle-icon">chevron_left</span> <span class="sidebar-label">Minimize</span>
       </button>
     </aside>
 

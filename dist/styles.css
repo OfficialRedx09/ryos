@@ -2755,3 +2755,30 @@ select.input option {
     display: flex !important;
   }
 }
+
+/* ───────────────────────── Sidebar Collapse ───────────────────────── */
+.app.sidebar-collapsed aside {
+  width: 64px !important;
+  min-width: 64px !important;
+}
+.app.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 12px 0;
+}
+.app.sidebar-collapsed .brand-name,
+.app.sidebar-collapsed .sidebar-label {
+  display: none;
+}
+.app.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 12px 0;
+  font-size: 0;
+  gap: 0;
+}
+.app.sidebar-collapsed .nav-item span.material-symbols-rounded {
+  font-size: 22px;
+  margin: 0;
+}
+.app.sidebar-collapsed #sidebar-toggle-icon {
+  transform: rotate(180deg);
+}

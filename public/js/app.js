@@ -56,7 +56,8 @@ const App = {
   },
 
   isConfigured() {
-    return localStorage.getItem("ca_fb_db") && localStorage.getItem("ca_lk_url") && localStorage.getItem("ca_lk_key") && localStorage.getItem("ca_lk_secret");
+    // Config lives on server now — just check if connection key is set
+    return !!localStorage.getItem("ca_connection_key");
   },
 
   addDevice(id) {
@@ -194,12 +195,12 @@ const App = {
             html += `
               <div title="${d} Battery: ${battVal}%" style="display:flex; align-items:center; margin-left:12px;">
                 <div class="topbar-batt-desktop" style="display:flex; align-items:center;">
-                  <svg viewBox="0 0 24 12" width="24" height="12">
-                    <rect x="1" y="1" width="20" height="10" rx="2" ry="2" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" />
-                    <path d="M22 4 L22 8" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round" />
-                    <rect x="2.5" y="2.5" width="${17 * (battVal / 100)}" height="7" rx="1" ry="1" fill="${battColor}" />
+                  <svg viewBox="0 0 28 14" width="28" height="14" style="filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));">
+                    <rect x="1" y="1" width="22" height="12" rx="3" ry="3" fill="none" stroke="var(--text-faint)" stroke-width="1.5" />
+                    <path d="M24 4.5 L24 9.5" stroke="var(--text-faint)" stroke-width="2" stroke-linecap="round" />
+                    <rect x="2.5" y="2.5" width="${19 * (battVal / 100)}" height="9" rx="1.5" ry="1.5" fill="${battColor}" />
                   </svg>
-                  <span style="font-size:11px; font-weight:600; color:var(--text); margin-left:6px;">${battVal}%</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text); margin-left:6px;">${battVal}%</span>
                 </div>
                 <div class="topbar-batt-mobile" style="position:relative; width:24px; height:24px; display:flex; align-items:center; justify-content:center; margin-left:4px;">
                   <svg viewBox="0 0 36 36" style="position:absolute; inset:0; width:100%; height:100%; transform: rotate(-90deg);">
@@ -289,7 +290,7 @@ const App = {
   /* ─────────── API config ─────────── */
   async showConfig() {
     if (App.role !== 'admin') {
-      App.toast("Only admins can access configuration", "err");
+      App.toast("Only admins can access server configuration", "err");
       return;
     }
 
@@ -298,7 +299,10 @@ const App = {
     let state;
     try {
       const r = await fetch('/api/config', {
-        headers: { 'x-device-code': code }
+        headers: { 
+          'x-device-code': code,
+          'x-connection-key': localStorage.getItem('ca_connection_key') || ''
+        }
       });
       if (!r.ok) throw new Error("Failed to load config");
       state = await r.json();
@@ -320,6 +324,8 @@ const App = {
         <div style="display:flex; flex-direction:row; justify-content:center; align-items:center; gap:6px;">  
         <button class="btn btn-ghost" data-x="cancel">Close</button>
         <button class="btn btn-primary" data-x="save">Save to Server</button></div>
+        <button class="btn btn-danger" style="margin-top:8;width:100%;" id="logout-btn">Logout</button>
+        <button class="btn btn-warning" style="margin-top:8;width:100%;" id="reset-key-btn">Reset Connection Key</button>
         </div>
       </div>`);
 
@@ -330,29 +336,27 @@ const App = {
       if (currentTab === "firebase") {
         body.innerHTML = `
           <label style="font-size:12px;color:var(--text-dim);">Firebase DB URL</label>
-          <input class="input" id="cfg-fb-db" value="${U.esc(state.FIREBASE_DB_URL || '')}">
+          <input class="input" id="cfg-fb-db" value="${U.esc(state.FIREBASE_DB_URL || localStorage.getItem('ca_fb_db') || '')}" style="margin-bottom:8px;">
         `;
       } else if (currentTab === "livekit") {
         body.innerHTML = `
-          <label style="font-size:12px;color:var(--text-dim);">LiveKit URL</label>
-          <input class="input" id="cfg-lk-url" value="${U.esc(state.LIVEKIT_WS_URL || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">LiveKit KEY</label>
-          <input class="input" id="cfg-lk-key" value="${U.esc(state.LIVEKIT_API_KEY || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">LiveKit SECRET</label>
-          <input class="input" id="cfg-lk-secret" value="${U.esc(state.LIVEKIT_API_SECRET || '')}">
+          <label style="font-size:12px;color:var(--text-dim);">LiveKit WebSocket URL</label>
+          <input class="input" id="cfg-lk-url" value="${U.esc(state.LIVEKIT_WS_URL || localStorage.getItem('ca_lk_url') || '')}" placeholder="wss://your-server.livekit.cloud" style="margin-bottom:8px;">
+          <label style="font-size:12px;color:var(--text-dim);">LiveKit API Key</label>
+          <input class="input" id="cfg-lk-key" value="${U.esc(state.LIVEKIT_API_KEY || localStorage.getItem('ca_lk_key') || '')}" placeholder="APIxxx..." style="margin-bottom:8px;">
+          <label style="font-size:12px;color:var(--text-dim);">LiveKit API Secret</label>
+          <input class="input" id="cfg-lk-secret" value="${U.esc(state.LIVEKIT_API_SECRET || localStorage.getItem('ca_lk_secret') || '')}" placeholder="secret...">
         `;
       } else if (currentTab === "r2") {
         body.innerHTML = `
-          <label style="font-size:12px;color:var(--text-dim);">R2 PUB URL</label>
-          <input class="input" id="cfg-r2-pub" value="${U.esc(state.R2_PUB || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">R2 HOST</label>
-          <input class="input" id="cfg-r2-host" value="${U.esc(state.R2_HOST || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">R2 BUCKET</label>
-          <input class="input" id="cfg-r2-bucket" value="${U.esc(state.R2_BUCKET || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">R2 ACCESS KEY</label>
-          <input class="input" id="cfg-r2-access" value="${U.esc(state.R2_ACCESS_KEY || '')}" style="margin-bottom:8px;">
-          <label style="font-size:12px;color:var(--text-dim);">R2 SECRET KEY</label>
-          <input class="input" id="cfg-r2-secret" type="password" value="${U.esc(state.R2_SECRET_KEY || '')}">
+          <label style="font-size:12px;color:var(--text-dim);">R2 Host (Account ID.r2.cloudflarestorage.com)</label>
+          <input class="input" id="cfg-r2-host" value="${U.esc(state.R2_HOST || localStorage.getItem('ca_r2_host') || '')}" placeholder="xxx.r2.cloudflarestorage.com" style="margin-bottom:8px;">
+          <label style="font-size:12px;color:var(--text-dim);">R2 Bucket Name</label>
+          <input class="input" id="cfg-r2-bucket" value="${U.esc(state.R2_BUCKET || localStorage.getItem('ca_r2_bucket') || 'files')}" placeholder="files" style="margin-bottom:8px;">
+          <label style="font-size:12px;color:var(--text-dim);">R2 Access Key ID</label>
+          <input class="input" id="cfg-r2-access" value="${U.esc(state.R2_ACCESS_KEY || localStorage.getItem('ca_r2_access') || '')}" placeholder="Access key..." style="margin-bottom:8px;">
+          <label style="font-size:12px;color:var(--text-dim);">R2 Secret Access Key</label>
+          <input class="input" id="cfg-r2-secret" value="${U.esc(state.R2_SECRET_KEY || localStorage.getItem('ca_r2_secret') || '')}" placeholder="Secret key...">
         `;
       }
     };
@@ -364,8 +368,7 @@ const App = {
         state.LIVEKIT_WS_URL = overlay.querySelector("#cfg-lk-url").value.trim();
         state.LIVEKIT_API_KEY = overlay.querySelector("#cfg-lk-key").value.trim();
         state.LIVEKIT_API_SECRET = overlay.querySelector("#cfg-lk-secret").value.trim();
-      } else if (currentTab === "r2") {
-        state.R2_PUB = overlay.querySelector("#cfg-r2-pub").value.trim();
+} else if (currentTab === "r2") {
         state.R2_HOST = overlay.querySelector("#cfg-r2-host").value.trim();
         state.R2_BUCKET = overlay.querySelector("#cfg-r2-bucket").value.trim();
         state.R2_ACCESS_KEY = overlay.querySelector("#cfg-r2-access").value.trim();
@@ -395,7 +398,11 @@ const App = {
       try {
         const r = await fetch('/api/config', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-device-code': code },
+          headers: { 
+            'Content-Type': 'application/json', 
+            'x-device-code': code,
+            'x-connection-key': localStorage.getItem('ca_connection_key') || ''
+          },
           body: JSON.stringify(state)
         });
         if (!r.ok) throw new Error("Failed to save config");
@@ -406,6 +413,25 @@ const App = {
         btn.innerHTML = origHtml;
         btn.disabled = false;
       }
+    };
+
+    // Logout button - removes device ID and connection key
+    overlay.querySelector('#logout-btn').onclick = async () => {
+      overlay.remove();
+      // Clear device code and connection key from localStorage
+      localStorage.removeItem('ca_device_code');
+      localStorage.removeItem('ca_connection_key');
+      localStorage.removeItem('ca_devices');
+      localStorage.removeItem('ca_current');
+      // Reload app to show auth screen
+      window.location.reload();
+    };
+
+    // Reset connection key button - forces 6-digit verification screen
+    overlay.querySelector('#reset-key-btn').onclick = () => {
+      overlay.remove();
+      localStorage.removeItem('ca_connection_key');
+      window.location.reload();
     };
 
     renderBody();
@@ -451,8 +477,16 @@ const App = {
   },
 
   _pinDots() {
-    document.querySelectorAll("#pin-dots span").forEach((d, i) =>
-      d.classList.toggle("filled", i < App.pin.buffer.length));
+    const dots = document.querySelectorAll("#pin-dots span");
+    if (dots.length === 0) return;
+    dots.forEach((d, i) => {
+      // Set the class based on buffer length - dot fills based on how many digits entered
+      if (i < App.pin.buffer.length) {
+        d.classList.add("filled");
+      } else {
+        d.classList.remove("filled");
+      }
+    });
   },
 
   async _pinKey(k) {
@@ -465,71 +499,79 @@ const App = {
     App._pinDots();
     if (p.buffer.length < 4) return;
     const entered = p.buffer;
-    p.buffer = "";
-    setTimeout(App._pinDots, 160);
+    
+    setTimeout(async () => {
+      p.buffer = "";
+      App._pinDots();
 
-    const err = document.getElementById("pin-error");
-    const card = document.querySelector(".pin-card");
-    const fail = (msg) => {
-      p.fails++;
-      err.textContent = msg;
-      card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
-      if (p.fails >= 5) {
-        p.fails = 0;
-        p.cooldownUntil = Date.now() + 30000;
-        let left = 30;
-        err.textContent = `Too many attempts — wait ${left} s`;
-        const iv = setInterval(() => {
-          left--;
-          if (left <= 0) { clearInterval(iv); err.textContent = ""; }
-          else err.textContent = `Too many attempts — wait ${left} s`;
-        }, 1000);
-      }
-    };
-
-    if (p.mode === "create") {
-      p.first = entered;
-      p.mode = "confirm";
-      App._pinUi();
-      return;
-    }
-    if (p.mode === "confirm") {
-      if (entered === p.first) {
-        localStorage.setItem(App.PIN_KEY, await U.sha256Hex(entered));
-        App.toast("PIN created", "ok");
-        App._unlock();
-      } else {
-        p.mode = "create";
-        App._pinUi();
-        err.textContent = "PINs didn't match — start over";
+      const err = document.getElementById("pin-error");
+      const card = document.querySelector(".pin-card");
+      const fail = (msg) => {
+        p.fails++;
+        err.textContent = msg;
         card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+        if (p.fails >= 5) {
+          p.fails = 0;
+          p.cooldownUntil = Date.now() + 30000;
+          let left = 30;
+          err.textContent = `Too many attempts — wait ${left} s`;
+          const iv = setInterval(() => {
+            left--;
+            if (left <= 0) { clearInterval(iv); err.textContent = ""; }
+            else err.textContent = `Too many attempts — wait ${left} s`;
+          }, 1000);
+        }
+      };
+
+      if (p.mode === "create") {
+        p.first = entered;
+        p.mode = "confirm";
+        App._pinUi();
+        return;
       }
-      return;
-    }
-    // enter / change / remove — verify against stored hash
-    const hash = await U.sha256Hex(entered);
-    if (hash !== localStorage.getItem(App.PIN_KEY)) {
-      fail("Wrong PIN");
-      return;
-    }
-    p.fails = 0;
-    if (p.mode === "change") { p.mode = "create"; App._pinUi(); return; }
-    if (p.mode === "remove") {
-      localStorage.removeItem(App.PIN_KEY);
-      App.toast("PIN removed", "ok");
+      if (p.mode === "confirm") {
+        if (entered === p.first) {
+          localStorage.setItem(App.PIN_KEY, await U.sha256Hex(entered));
+          App.toast("PIN created", "ok");
+          App._unlock();
+        } else {
+          p.mode = "create";
+          App._pinUi();
+          err.textContent = "PINs didn't match — start over";
+          card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+        }
+        return;
+      }
+      // enter / change / remove — verify against stored hash
+      const hash = await U.sha256Hex(entered);
+      if (hash !== localStorage.getItem(App.PIN_KEY)) {
+        fail("Wrong PIN");
+        return;
+      }
+      p.fails = 0;
+      if (p.mode === "change") { p.mode = "create"; App._pinUi(); return; }
+      if (p.mode === "remove") {
+        localStorage.removeItem(App.PIN_KEY);
+        App.toast("PIN removed", "ok");
+        App._unlock();
+        return;
+      }
       App._unlock();
-      return;
-    }
-    App._unlock();
+    }, 160);
   },
 
   // ─── 6-digit connection key screen ───
   _showSixDigitKeyScreen() {
+    // Clear any stale connection key from localStorage so we start fresh
+    // and don't always redirect to 110011 or another hardcoded key
+    localStorage.removeItem('ca_connection_key');
+
     document.getElementById("app").classList.add("hidden");
     const pinlock = document.getElementById("pinlock");
     pinlock.classList.remove("hidden");
 
-    // Temporarily replace pin card content with 6-digit key UI
+    const isAdmin = App.role === 'admin';
+
     pinlock.innerHTML = `
       <div class="pin-card" id="six-key-card">
         <div class="pin-logo"><span class="material-symbols-rounded" style="font-size:48px;color:var(--accent)">vpn_key</span></div>
@@ -544,6 +586,10 @@ const App = {
         <button id="six-key-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;border-radius:12px;">
           Unlock
         </button>
+        ${isAdmin ? `
+        <button id="six-key-manual-btn" class="btn btn-ghost" style="width:100%;margin-top:10px;">
+          <span class="material-symbols-rounded">person_add</span> Add User Manually
+        </button>` : ''}
         <p style="margin-top:14px;font-size:12px;color:var(--text-dim);text-align:center;">
           This key links your device to the monitoring network
         </p>
@@ -577,7 +623,7 @@ const App = {
 
         if (!data || !data.FIREBASE_DB_URL) throw new Error("Invalid connection key");
 
-        // Store the verified key
+        // Key verified — no need to store actual credentials in localStorage
         localStorage.setItem("ca_connection_key", pin);
         App.toast("Connection key verified!", "ok");
 
@@ -596,6 +642,22 @@ const App = {
 
     btn.onclick = verify;
     input.onkeydown = e => { if (e.key === "Enter") verify(); };
+
+    // Admin-only: Add User Manually button
+    if (isAdmin) {
+      const manualBtn = document.getElementById("six-key-manual-btn");
+      if (manualBtn) {
+        manualBtn.onclick = () => {
+          // Hide pinlock and show the setup wizard
+          document.getElementById("pinlock").classList.add("hidden");
+          const wizard = document.getElementById("setup-wizard");
+          if (wizard) {
+            wizard.classList.remove("hidden");
+            App._initWizard();
+          }
+        };
+      }
+    }
   },
 
   // Restores the original pinlock HTML structure after the 6-digit screen
@@ -606,7 +668,7 @@ const App = {
         <h2 class="pin-title" id="pin-title">Locked</h2>
         <p class="pin-sub" id="pin-sub">Enter your 4-digit PIN to unlock Ryos</p>
         <p id="pin-error" style="color:#ef4444;font-size:13px;min-height:18px;text-align:center;margin:0 0 8px;"></p>
-        <div id="pin-dots">
+        <div id="pin-dots" class="pin-dots">
           <span></span><span></span><span></span><span></span>
         </div>
         <div class="pin-pad">
@@ -648,9 +710,19 @@ const App = {
     App.load();
     App.renderNav();
 
+    const app = document.getElementById("app");
+    app.classList.add("sidebar-collapsed");
+    localStorage.setItem("ca_sidebar_collapsed", "1");
+
     document.getElementById("config-btn-top").onclick = () => App.showConfig();
     document.getElementById("lock-btn-top").onclick = () => App.lock();
     document.getElementById("lock-btn-side").onclick = () => App.lock();
+    document.getElementById("sidebar-toggle").onclick = () => {
+      const app = document.getElementById("app");
+      app.classList.toggle("sidebar-collapsed");
+      // Persist sidebar state to localStorage
+      localStorage.setItem("ca_sidebar_collapsed", app.classList.contains("sidebar-collapsed") ? "1" : "0");
+    };
     document.getElementById("moresheet").addEventListener("click", e => {
       if (e.target.id === "moresheet") App.closeMore();
     });
@@ -706,21 +778,34 @@ const App = {
       }
 
       if (App.role === 'admin' || App.role === 'client') {
-        if (App.role === 'client') {
-          // Hide settings button for client
-          const settingsBtns = document.querySelectorAll('[data-page="settings"]');
-          settingsBtns.forEach(btn => {
-            btn.style.opacity = '0.3';
-            btn.style.pointerEvents = 'none';
-          });
-        }
-        
+        window._ryosRoleLoaded = true;
         // Check if 6-digit connection key is already verified
         const hasConnectionKey = !!localStorage.getItem('ca_connection_key');
-        if (!hasConnectionKey) {
-          App._showSixDigitKeyScreen();
-        } else {
+
+        if (App.role === 'client') {
+          // Hide config (gear) button for clients — they can still access settings page
+          const configBtn = document.getElementById('config-btn-top');
+          if (configBtn) configBtn.style.display = 'none';
+
+          // First time client popup
+          if (!hasConnectionKey) {
+            App.toast(`User registered successfully as client (Device ID : ${code})`, "ok", 6000);
+          }
+        }
+        
+        // If admin, disable the anti-inspect protections
+        if (App.role === 'admin') {
+          window._ryosAdmin = true;
+          // First time admin popup
+          if (!hasConnectionKey) {
+            App.toast("Admin mode !", "info", 6000);
+          }
+        }
+
+        if (hasConnectionKey) {
           App.showPin(App.hasPin() ? "enter" : "create");
+        } else {
+          App._showSixDigitKeyScreen();
         }
       } else {
         App.toast("Unauthorized. Code: " + code, "err");
@@ -767,7 +852,7 @@ const App = {
     let payload = {
       FIREBASE_DB_URL: "",
       LIVEKIT_WS_URL: "", LIVEKIT_API_KEY: "", LIVEKIT_API_SECRET: "",
-      R2_HOST: "", R2_PUB: "", R2_ACCESS_KEY: "", R2_SECRET_KEY: "", R2_BUCKET: "files",
+      R2_HOST: "", R2_ACCESS_KEY: "", R2_SECRET_KEY: "", R2_BUCKET: "files",
       Unlock_code: "9099"
     };
 
@@ -792,8 +877,7 @@ const App = {
         localStorage.setItem("ca_lk_key", data.LIVEKIT_API_KEY);
         localStorage.setItem("ca_lk_secret", data.LIVEKIT_API_SECRET);
         localStorage.setItem("ca_r2_host", data.R2_HOST);
-        localStorage.setItem("ca_r2_pub", data.R2_PUB || "");
-        localStorage.setItem("ca_r2_access", data.R2_ACCESS_KEY);
+                localStorage.setItem("ca_r2_access", data.R2_ACCESS_KEY);
         localStorage.setItem("ca_r2_secret", data.R2_SECRET_KEY);
         localStorage.setItem("ca_r2_bucket", data.R2_BUCKET || "files");
 
@@ -856,7 +940,6 @@ const App = {
     document.getElementById("wiz-btn-3").onclick = async () => {
       const btn = document.getElementById("wiz-btn-3");
       let host = document.getElementById("wiz-r2-host").value.trim();
-      let pub = document.getElementById("wiz-r2-pub").value.trim();
       let access = document.getElementById("wiz-r2-access").value.trim();
       let secret = document.getElementById("wiz-r2-secret").value.trim();
       if (!host || !access || !secret) return App.toast("Please fill required R2 fields", "err");
@@ -866,7 +949,6 @@ const App = {
         const code = Math.floor(100000 + Math.random() * 900000).toString();
 
         payload.R2_HOST = host;
-        payload.R2_PUB = pub;
         payload.R2_ACCESS_KEY = access;
         payload.R2_SECRET_KEY = secret;
 
@@ -884,7 +966,6 @@ const App = {
         localStorage.setItem("ca_lk_key", payload.LIVEKIT_API_KEY);
         localStorage.setItem("ca_lk_secret", payload.LIVEKIT_API_SECRET);
         localStorage.setItem("ca_r2_host", payload.R2_HOST);
-        localStorage.setItem("ca_r2_pub", payload.R2_PUB);
         localStorage.setItem("ca_r2_access", payload.R2_ACCESS_KEY);
         localStorage.setItem("ca_r2_secret", payload.R2_SECRET_KEY);
         localStorage.setItem("ca_r2_bucket", "files");
@@ -895,7 +976,6 @@ const App = {
         LK.KEY = payload.LIVEKIT_API_KEY;
         LK.SECRET = payload.LIVEKIT_API_SECRET;
         R2.HOST = payload.R2_HOST;
-        R2.PUB = payload.R2_PUB;
         R2.ACCESS_KEY = payload.R2_ACCESS_KEY;
         R2.SECRET_KEY = payload.R2_SECRET_KEY;
         R2.BUCKET = "files";
