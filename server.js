@@ -3,7 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { AccessToken } = require('livekit-server-sdk');
-const { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const app = express();
@@ -42,6 +42,27 @@ function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
+// On startup: if local config is missing LiveKit creds but has a known PIN,
+// fetch from Firebase and cache locally so tokens work without the browser header.
+async function bootstrapConfigFromFirebase() {
+  if (config.LIVEKIT_API_KEY && config.LIVEKIT_API_SECRET && config.LIVEKIT_WS_URL) return;
+  const pin = config.LAST_CONNECTION_KEY;
+  if (!pin) return;
+  try {
+    console.log(`[Config] Local LiveKit config empty — fetching from Firebase for key=${pin}`);
+    const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`);
+    const data = await r.json();
+    if (data && data.LIVEKIT_API_KEY && data.LIVEKIT_WS_URL) {
+      config = { ...config, ...data };
+      saveConfig();
+      console.log('[Config] LiveKit config loaded from Firebase and cached locally.');
+    }
+  } catch (e) {
+    console.error('[Config] Failed to bootstrap from Firebase:', e.message);
+  }
+}
+bootstrapConfigFromFirebase();
+
 const apiCache = new Map();
 
 async function getClientConfig(req) {
@@ -57,8 +78,10 @@ async function getClientConfig(req) {
     const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`);
     const data = await r.json();
     if (data && data.FIREBASE_DB_URL) {
-      apiCache.set(pin, { data, time: Date.now() });
-      return data;
+      // Merge over local config so any missing fields fall back gracefully
+      const merged = { ...config, ...data };
+      apiCache.set(pin, { data: merged, time: Date.now() });
+      return merged;
     }
   } catch(e) {
     console.error(`Failed to fetch config for pin ${pin}`, e);
@@ -166,6 +189,9 @@ app.post('/api/config', checkAdmin, async (req, res) => {
     if (!r.ok) throw new Error("Failed to save to Firebase");
     
     apiCache.set(pin, { data: newCfg, time: Date.now() });
+    // Always mirror to local config.json so the server has credentials as fallback
+    config = { ...config, ...newCfg, LAST_CONNECTION_KEY: pin };
+    saveConfig();
     res.json({ success: true });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -222,18 +248,31 @@ app.post('/api/firebase/del', checkAuth, async (req, res) => {
 app.post('/api/livekit/token', checkAuth, async (req, res) => {
   const cfg = await getClientConfig(req);
   const { roomName, participantName } = req.body;
-  if (!cfg.LIVEKIT_API_KEY || !cfg.LIVEKIT_API_SECRET || !cfg.LIVEKIT_WS_URL) {
-    return res.status(400).json({ error: 'LiveKit not configured on server' });
+
+  const key = cfg.LIVEKIT_API_KEY;
+  const secret = cfg.LIVEKIT_API_SECRET;
+  const wsUrl = cfg.LIVEKIT_WS_URL;
+
+  if (!key || !secret || !wsUrl) {
+    const pin = req.headers['x-connection-key'] || '(none)';
+    console.error(`[LiveKit] Token request denied — missing config for key=${pin}. key=${!!key} secret=${!!secret} url=${!!wsUrl}`);
+    return res.status(400).json({ error: 'LiveKit not configured — check your API settings (key/secret/URL)' });
   }
 
-  const at = new AccessToken(cfg.LIVEKIT_API_KEY, cfg.LIVEKIT_API_SECRET, {
-    identity: participantName || `admin-${Math.floor(Math.random()*10000)}`,
-  });
-  
-  at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
+  try {
+    const at = new AccessToken(key, secret, {
+      identity: participantName || `admin-${Math.floor(Math.random()*10000)}`,
+    });
+    at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
 
-  const token = at.toJwt();
-  res.json({ url: cfg.LIVEKIT_WS_URL, token });
+    // toJwt() is async in livekit-server-sdk v2 — must be awaited
+    const token = await at.toJwt();
+    console.log(`[LiveKit] Token minted for room=${roomName}`);
+    res.json({ url: wsUrl, token });
+  } catch (e) {
+    console.error('[LiveKit] Token generation error:', e.message);
+    res.status(500).json({ error: 'Token generation failed: ' + e.message });
+  }
 });
 
 // S3 / R2 Setup
@@ -288,9 +327,15 @@ app.post('/api/r2/presign-get', checkAuth, async (req, res) => {
   const { key } = req.body;
   const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
-  
+  if (!key) return res.status(400).json({ error: 'Missing key' });
+
   try {
-  } catch(e) {}
+    const cmd = new GetObjectCommand({ Bucket: cfg.R2_BUCKET, Key: key });
+    const url = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
+    res.json({ url });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/r2/delete', checkAuth, async (req, res) => {

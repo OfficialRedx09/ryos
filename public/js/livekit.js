@@ -13,7 +13,11 @@ const LK = {
   _monitorDevice: null,
 
   _h() {
-    return { 'Content-Type': 'application/json', 'x-device-code': localStorage.getItem('ca_device_code') || '' };
+    return {
+      'Content-Type': 'application/json',
+      'x-device-code': localStorage.getItem('ca_device_code') || '',
+      'x-connection-key': localStorage.getItem('ca_connection_key') || '',
+    };
   },
 
   async mintToken(roomName, identity) {
@@ -22,7 +26,11 @@ const LK = {
       headers: LK._h(),
       body: JSON.stringify({ roomName, participantName: identity })
     });
-    if (!r.ok) throw new Error("Failed to get LiveKit token");
+    if (!r.ok) {
+      let msg = 'Failed to get LiveKit token';
+      try { const d = await r.json(); if (d && d.error) msg = d.error; } catch (_) {}
+      throw new Error(msg);
+    }
     const data = await r.json();
     return { token: data.token, url: data.url };
   },
@@ -62,13 +70,17 @@ const LK = {
     try {
       const { token, url } = await LK.mintToken("monitor-" + deviceId, "admin-" + Math.floor(Math.random() * 10000));
       await room.connect(url, token);
+      LK.monitorRoom = room;
       if (LK._onMonitorState) LK._onMonitorState("connected");
-    } catch (e) { console.error(e); }
-    LK.monitorRoom = room;
-    // Attach tracks that were already live before we (re)joined — this is
-    // what makes a page refresh re-attach to an in-progress stream.
-    LK._attachExisting(room, t => t.kind === "video", t => LK._onMonitorTrack && LK._onMonitorTrack(t));
-    return room;
+      // Attach tracks that were already live before we (re)joined — this is
+      // what makes a page refresh re-attach to an in-progress stream.
+      LK._attachExisting(room, t => t.kind === "video", t => LK._onMonitorTrack && LK._onMonitorTrack(t, null));
+    } catch (e) {
+      console.error("[LK] connectMonitor failed:", e);
+      if (LK._onMonitorState) LK._onMonitorState("disconnected");
+      throw e;
+    }
+    return LK.monitorRoom;
   },
 
   /* Call cb(track) for every already-subscribed remote track in the room. */
@@ -97,11 +109,15 @@ const LK = {
     try {
       const { token, url } = await LK.mintToken("voice-room-" + deviceId, "admin-voice-" + Math.floor(Math.random() * 10000));
       await room.connect(url, token);
+      LK.voiceRoom = room;
       if (onState) onState("connected");
-    } catch (e) { console.error(e); }
-    LK.voiceRoom = room;
-    LK._attachExisting(room, t => t.kind === "audio", t => onAudio && onAudio(t));
-    return room;
+      LK._attachExisting(room, t => t.kind === "audio", t => onAudio && onAudio(t));
+    } catch (e) {
+      console.error("[LK] connectVoice failed:", e);
+      if (onState) onState("disconnected");
+      throw e;
+    }
+    return LK.voiceRoom;
   },
 
   // Remote-control gesture → JSON on the data channel, topic "remote-control"

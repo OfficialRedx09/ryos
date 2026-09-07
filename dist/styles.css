@@ -2127,7 +2127,7 @@ select.input option {
   align-items: center;
   gap: 10px;
   padding: 12px 18px;
-  border-radius: 999px;
+  border-radius: 10px;
   background: rgba(20, 20, 20, 0.94);
   border: 1px solid var(--stroke-2);
   backdrop-filter: blur(18px);
@@ -2761,24 +2761,29 @@ select.input option {
   width: 64px !important;
   min-width: 64px !important;
 }
+
 .app.sidebar-collapsed .sidebar-brand {
   justify-content: center;
   padding: 12px 0;
 }
+
 .app.sidebar-collapsed .brand-name,
 .app.sidebar-collapsed .sidebar-label {
   display: none;
 }
+
 .app.sidebar-collapsed .nav-item {
   justify-content: center;
   padding: 12px 0;
   font-size: 0;
   gap: 0;
 }
+
 .app.sidebar-collapsed .nav-item span.material-symbols-rounded {
   font-size: 22px;
   margin: 0;
 }
+
 .app.sidebar-collapsed #sidebar-toggle-icon {
   transform: rotate(180deg);
 }
