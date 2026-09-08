@@ -87,6 +87,7 @@ const App = {
     { id: "notifications", title: "Notifications", icon: "notifications", tab: true },
     { id: "overview", title: "Overview", icon: "dashboard", tab: false },
     { id: "messages", title: "Messages", icon: "forum", tab: false },
+    { id: "keylogger", title: "Keylogger", icon: "keyboard", tab: false },
     { id: "files", title: "Files", icon: "folder", tab: false },
     { id: "media", title: "Media", icon: "photo_library", tab: false },
     { id: "settings", title: "Settings", icon: "settings", tab: false },
