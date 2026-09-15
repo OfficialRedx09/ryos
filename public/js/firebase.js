@@ -67,12 +67,33 @@ const U = {
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   },
 
-  fmtBytes(n) {
-    n = Number(n) || 0;
-    if (n < 1024) return n + " B";
-    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-    if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1) + " MB";
-    return (n / 1073741824).toFixed(2) + " GB";
+  // Formats a byte count. Pass unknownText for "we don't know" (null/undefined)
+  // so callers never have to print a misleading "0 B".
+  fmtBytes(n, unknownText = "—") {
+    if (n === null || n === undefined || n === "" || n === "null") return unknownText;
+    const v = Number(n);
+    if (!isFinite(v) || v < 0) return unknownText;
+    if (v < 1024) return v + " B";
+    if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
+    if (v < 1024 * 1024 * 1024) return (v / 1048576).toFixed(1) + " MB";
+    return (v / 1073741824).toFixed(2) + " GB";
+  },
+
+  // "15 Sep 2026, 16:22" — for R2 LastModified / epoch values.
+  fmtDate(value, withTime = true) {
+    if (!value) return "—";
+    let d;
+    if (value instanceof Date) d = value;
+    else if (typeof value === "number" || /^\d+$/.test(String(value))) {
+      const num = Number(value);
+      // epoch seconds vs milliseconds
+      d = new Date(num < 1e12 ? num * 1000 : num);
+    } else d = new Date(value);
+    if (isNaN(d.getTime())) return "—";
+    const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+    if (!withTime) return date;
+    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    return `${date}, ${time}`;
   },
 
   // Heartbeat format written by MonitoringService: "dd/MM/yy - hh:mm am"
@@ -121,6 +142,49 @@ const U = {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
+  },
+
+  // Full-screen media viewer for R2 objects (image / video / audio).
+  // `url` must be a fetchable URL — build it with R2.publicUrl(key).
+  lightbox({ url, name, key, kind }) {
+    const label = name || String(key || "").split("/").pop() || "file";
+    const isVid = kind === "video" || R2.isVideo(label);
+    const isAud = kind === "audio" || R2.isAudio(label);
+
+    let media;
+    if (isVid) {
+      media = `<video src="${url}" controls autoplay playsinline style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);"></video>`;
+    } else if (isAud) {
+      media = `<audio src="${url}" controls autoplay style="width:min(520px,90vw);"></audio>`;
+    } else {
+      media = `<img src="${url}" alt="${U.esc(label)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);">`;
+    }
+
+    const overlay = U.el(`
+      <div style="position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.95);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeIn 0.2s ease;">
+        <div style="position:absolute;top:0;left:0;right:0;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);z-index:10000;">
+          <button id="mv-close" class="btn btn-ghost btn-icon" title="Close" style="border:none;color:#fff;background:rgba(255,255,255,0.1);border-radius:50%;"><span class="material-symbols-rounded">close</span></button>
+          <div style="color:#fff;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;text-shadow:0 2px 4px rgba(0,0,0,0.5);">${U.esc(label)}</div>
+          <button id="mv-dl" class="btn btn-primary btn-icon" title="Download" style="border-radius:50%;"><span class="material-symbols-rounded">download</span></button>
+        </div>
+        ${media}
+      </div>`);
+
+    const onKey = e => { if (e.key === "Escape") close(); };
+    const close = () => {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+    };
+
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    overlay.querySelector("#mv-close").onclick = close;
+    overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+    overlay.querySelector("#mv-dl").onclick = async () => {
+      App.toast("Downloading " + label + "…", "info");
+      await R2.download(key || label, label);
+    };
+    return overlay;
   },
 
   async sha256Hex(str) {

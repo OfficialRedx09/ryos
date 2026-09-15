@@ -1,4 +1,4 @@
-const CACHE_NAME = "ryos-cache-v2";
+const CACHE_NAME = "ryos-cache-v3";
 const ASSETS_TO_CACHE = [
   "/",
   "/index.html",
@@ -7,6 +7,8 @@ const ASSETS_TO_CACHE = [
   "/js/r2.js",
   "/js/livekit.js",
   "/js/app.js",
+  "/js/pages/media.js",
+  "/js/pages/backups.js",
   "/logo/logo.png"
 ];
 

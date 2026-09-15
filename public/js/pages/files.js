@@ -1,10 +1,47 @@
 /* Files page — browse the device storage tree and pull any file.
    Tree: storage_tree/{id} = [{name,path,parent,isDir,size}] (refreshed by
    the child every 2h). Pull: download_file/{id}/request = path → poll
-   download_file/{id}/status until {state:"ready",key} → download from R2. */
+   download_file/{id}/status until {state:"ready",key} → download from R2.
+
+   Sizes: older child builds ship tree nodes WITHOUT a size field, which used
+   to show up as a bogus "0 B". We now read whatever size field the device
+   sends (size / sizeBytes / bytes / length / …) and remember the real size
+   discovered from R2 after a pull, so unknown sizes display as "—" instead of
+   a wrong number. */
 Pages.files = {
   _tree: [],
   _cwd: "",
+  _sizesKey: "ca_file_sizes",
+
+  _sizeMap() {
+    try { return JSON.parse(localStorage.getItem(Pages.files._sizesKey) || "{}") || {}; }
+    catch (_) { return {}; }
+  },
+
+  _rememberSize(id, path, size) {
+    if (!id || !path || !(Number(size) > 0)) return;
+    const map = Pages.files._sizeMap();
+    map[`${id}|${path}`] = Number(size);
+    try { localStorage.setItem(Pages.files._sizesKey, JSON.stringify(map)); } catch (_) { }
+  },
+
+  // Real size in bytes, or null when neither the device nor the cache knows it.
+  _sizeOf(n) {
+    const raw = [n.size, n.sizeBytes, n.size_bytes, n.bytes, n.length, n.fileSize, n.filesize, n.len]
+      .find(v => v !== undefined && v !== null && v !== "");
+    if (raw !== undefined) {
+      const v = Number(raw);
+      if (isFinite(v) && v >= 0) return v;
+    }
+    const cached = Pages.files._sizeMap()[`${Pages.files._id}|${n.path}`];
+    return (typeof cached === "number" && cached > 0) ? cached : null;
+  },
+
+  // True when the device reported no size at all for this tree.
+  _sizesMissing() {
+    return Pages.files._tree.some(n => !n.isDir) &&
+      !Pages.files._tree.some(n => !n.isDir && Pages.files._sizeOf(n) !== null);
+  },
 
   render(root) {
     const id = App.dev();
@@ -64,16 +101,30 @@ Pages.files = {
       return;
     }
     list.innerHTML = "";
+    if (Pages.files._sizesMissing()) {
+      list.insertAdjacentHTML("beforeend",
+        `<div class="card" style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px">
+           <span class="material-symbols-rounded" style="color:var(--text-faint)">info</span>
+           <div style="font-size:13px;color:var(--text-dim)">
+             This device hasn't reported file sizes yet, so sizes show as “—” here.
+             Sizes appear automatically as you pull files, and instantly once the
+             child app is updated (it then sends a size per file).
+           </div>
+         </div>`);
+    }
     nodes.forEach(n => {
+      const size = n.isDir ? null : Pages.files._sizeOf(n);
+      const sizeText = size === null ? "—" : U.fmtBytes(size);
+      const sizeTitle = size === null ? "Size not reported by the device (pull the file to learn it)" : U.fmtBytes(size);
       const row = U.el(`
         <div class="list-row">
-          <span class="material-symbols-rounded">${n.isDir ? "folder" : "draft"}</span>
+          <span class="material-symbols-rounded">${n.isDir ? "folder" : R2.icon(n.name)}</span>
           <div class="list-row-main">
             <div class="list-row-title">${U.esc(n.name)}</div>
-            ${n.isDir ? "" : `<div class="list-row-sub">${U.fmtBytes(n.size)}</div>`}
+            ${n.isDir ? "" : `<div class="list-row-sub" title="${U.esc(sizeTitle)}">${sizeText}</div>`}
           </div>
           ${n.isDir ? `<span class="material-symbols-rounded" style="color:var(--text-faint)">chevron_right</span>`
-                    : `<button class="btn btn-sm btn-ghost"><span class="material-symbols-rounded">download</span>Pull</button>`}
+          : `<button class="btn btn-sm btn-ghost"><span class="material-symbols-rounded">download</span>Pull</button>`}
         </div>`);
       if (n.isDir) {
         row.onclick = () => { Pages.files._cwd = n.path; Pages.files._render(); };
@@ -97,6 +148,7 @@ Pages.files = {
         const st = await FB.get(`download_file/${id}/status`);
         if (st && st.state === "ready" && st.key) {
           App.toast("Upload ready — downloading…", "ok");
+          await Pages.files._learnSize(id, node, st);
           await R2.download(st.key, st.name || node.name);
           return;
         }
@@ -105,6 +157,19 @@ Pages.files = {
       App.toast("Timed out waiting for the device", "err");
     } catch (e) {
       App.toast("Pull failed: " + e.message, "err");
+    }
+  },
+
+  // Remembers the real size (device-reported if present, otherwise from R2)
+  // so the row shows a real number on this and every later visit.
+  async _learnSize(id, node, st) {
+    let size = Number(st.size || st.sizeBytes || 0) || 0;
+    if (!size && st.key) {
+      try { size = Number((await R2.stat(st.key)).size) || 0; } catch (_) { }
+    }
+    if (size > 0) {
+      Pages.files._rememberSize(id, node.path, size);
+      if (Pages.files._cwd !== undefined) Pages.files._render();
     }
   },
 

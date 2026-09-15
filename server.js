@@ -3,7 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { AccessToken } = require('livekit-server-sdk');
-const { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const app = express();
@@ -15,7 +15,7 @@ const PUBLIC_DIR = fs.existsSync(DIST_DIR) ? DIST_DIR : path.join(__dirname, 'pu
 app.use(express.static(PUBLIC_DIR));
 
 // Configuration management
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = process.env.CONFIG_FILE || path.join(__dirname, 'config.json');
 
 // Default config
 let config = {
@@ -65,8 +65,19 @@ bootstrapConfigFromFirebase();
 
 const apiCache = new Map();
 
+// The device/role code normally arrives in a header (fetch calls) but <img>,
+// <video> and direct download links can only pass it as a query parameter.
+function clientCode(req) {
+  return req.headers['x-device-code'] || req.query.code || '';
+}
+
+// Connection/PIN key — same header-or-query rule as the device code.
+function clientPin(req) {
+  return req.headers['x-connection-key'] || req.query.ck || '';
+}
+
 async function getClientConfig(req) {
-  const pin = req.headers['x-connection-key'];
+  const pin = clientPin(req);
   if (!pin) return config;
 
   const cached = apiCache.get(pin);
@@ -123,7 +134,7 @@ const authCache = new Map();
 
 // Middleware for general API access (both admin and client)
 async function checkAuth(req, res, next) {
-  const code = req.headers['x-device-code'];
+  const code = clientCode(req);
   if (!code) return res.status(401).json({ error: 'Unauthorized' });
   
   const cached = authCache.get(code);
@@ -149,7 +160,7 @@ async function checkAuth(req, res, next) {
 
 // Middleware to protect admin routes
 async function checkAdmin(req, res, next) {
-  const code = req.headers['x-device-code'];
+  const code = clientCode(req);
   if (!code) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const response = await fetch(ADMIN_DB);
@@ -291,19 +302,160 @@ function getS3Client(cfg) {
   });
 }
 
+// Content-Type by extension, used when R2 stored no metadata.
+const MIME_TYPES = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+  webp: 'image/webp', bmp: 'image/bmp', heic: 'image/heic', heif: 'image/heif',
+  svg: 'image/svg+xml', ico: 'image/x-icon', dng: 'image/x-adobe-dng',
+  mp4: 'video/mp4', m4v: 'video/x-m4v', webm: 'video/webm', mkv: 'video/x-matroska',
+  mov: 'video/quicktime', '3gp': 'video/3gpp', avi: 'video/x-msvideo', ts: 'video/mp2t',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav',
+  ogg: 'audio/ogg', opus: 'audio/opus', amr: 'audio/amr', flac: 'audio/flac',
+  pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', json: 'application/json',
+  xml: 'application/xml', csv: 'text/csv', zip: 'application/zip', rar: 'application/vnd.rar',
+  apk: 'application/vnd.android.package-archive', vcf: 'text/vcard',
+  doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+function mimeFromKey(key) {
+  const ext = String(key || '').split('.').pop().toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
+// Strips path separators / quotes / control chars from a client-supplied
+// filename before echoing it back in Content-Disposition.
+function safeFileName(name) {
+  return String(name || '')
+    .replace(/[\\/:*?"<>|\r\n]/g, '')
+    .replace(/[\x00-\x1f]/g, '')
+    .trim()
+    .slice(0, 180);
+}
+
 // R2 Proxy Routes
+//
+// The bucket is browsed/played through this server instead of a public R2
+// domain: the bucket has no public URL configured, and proxying keeps object
+// requests same-origin (so <img>/<video>/fetch work without R2 CORS rules).
+// Auth arrives as header or query param (see clientCode/clientPin) because
+// media tags cannot send headers.
 app.get('/api/r2/list', checkAuth, async (req, res) => {
   const cfg = await getClientConfig(req);
   const prefix = req.query.prefix || '';
   const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
-  
+
   try {
-    const cmd = new ListObjectsV2Command({ Bucket: cfg.R2_BUCKET, Prefix: prefix });
+    const params = { Bucket: cfg.R2_BUCKET, Prefix: prefix };
+    // delimiter=/ turns the listing into "folders + files" for the Backups page
+    if (req.query.delimiter) params.Delimiter = req.query.delimiter;
+    if (req.query.maxKeys) params.MaxKeys = parseInt(req.query.maxKeys, 10) || undefined;
+    if (req.query.token) params.ContinuationToken = req.query.token;
+    if (req.query.startAfter) params.StartAfter = req.query.startAfter;
+    const cmd = new ListObjectsV2Command(params);
     const data = await s3.send(cmd);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Aggregated size/count for a whole prefix (recursive, paged internally).
+// Used by the Backups page to show folder totals without pulling every key
+// down to the browser.
+app.get('/api/r2/summary', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
+  const prefix = req.query.prefix || '';
+  const s3 = getS3Client(cfg);
+  if (!s3) return res.status(400).json({ error: 'R2 not configured' });
+
+  const MAX_PAGES = 25; // hard stop: 25k objects
+  let token = undefined, count = 0, size = 0, pages = 0, truncated = false;
+  try {
+    do {
+      const data = await s3.send(new ListObjectsV2Command({
+        Bucket: cfg.R2_BUCKET, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token,
+      }));
+      (data.Contents || []).forEach(o => { count++; size += Number(o.Size || 0); });
+      token = data.IsTruncated ? data.NextContinuationToken : undefined;
+      pages++;
+      if (token && pages >= MAX_PAGES) { truncated = true; token = undefined; }
+    } while (token);
+    res.json({ prefix, count, size, truncated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Object metadata (size/type) without downloading the body.
+app.get('/api/r2/stat', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
+  const key = req.query.key;
+  const s3 = getS3Client(cfg);
+  if (!s3) return res.status(400).json({ error: 'R2 not configured' });
+  if (!key) return res.status(400).json({ error: 'Missing key' });
+
+  try {
+    const data = await s3.send(new HeadObjectCommand({ Bucket: cfg.R2_BUCKET, Key: key }));
+    res.json({
+      key,
+      size: Number(data.ContentLength || 0),
+      contentType: data.ContentType || mimeFromKey(key),
+      lastModified: data.LastModified || null,
+      etag: data.ETag || null,
+    });
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+
+// Streams an object straight from R2 (images, videos, screenshots, downloads).
+// Range requests are forwarded so <video> seeking works.
+app.get('/api/r2/file', checkAuth, async (req, res) => {
+  const cfg = await getClientConfig(req);
+  const key = req.query.key;
+  const s3 = getS3Client(cfg);
+  if (!s3) return res.status(400).json({ error: 'R2 not configured' });
+  if (!key) return res.status(400).json({ error: 'Missing key' });
+
+  try {
+    const params = { Bucket: cfg.R2_BUCKET, Key: key };
+    if (req.headers.range) params.Range = req.headers.range;
+
+    const data = await s3.send(new GetObjectCommand(params));
+    const name = safeFileName(req.query.name) || key.split('/').pop();
+
+    res.setHeader('Content-Type', data.ContentType || mimeFromKey(key));
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    if (data.ContentLength != null) res.setHeader('Content-Length', String(data.ContentLength));
+    if (data.ContentRange) {
+      res.status(206);
+      res.setHeader('Content-Range', data.ContentRange);
+    }
+    if (req.query.dl) {
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${name.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`
+      );
+    }
+
+    const body = data.Body;
+    if (body && typeof body.pipe === 'function') {
+      req.on('close', () => { try { body.destroy(); } catch (_) {} });
+      body.on('error', () => { try { res.destroy(); } catch (_) {} });
+      body.pipe(res);
+    } else if (body && typeof body.transformToByteArray === 'function') {
+      res.end(Buffer.from(await body.transformToByteArray()));
+    } else {
+      res.end();
+    }
+  } catch (e) {
+    if (res.headersSent) { try { res.destroy(); } catch (_) {} return; }
+    const notFound = /NoSuchKey|NotFound|404/.test(e.name || e.message || '');
+    res.status(notFound ? 404 : 500).json({ error: e.message });
   }
 });
 

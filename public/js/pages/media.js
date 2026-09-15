@@ -34,7 +34,7 @@ Pages.media = {
         body.innerHTML = `<div class="empty"><span class="material-symbols-rounded">hide_image</span><p>No media backed up yet.<br>Enable image/video backup on the Settings page.</p></div>`;
         return;
       }
-      items.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      items.sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
       body.innerHTML = `
         <div class="radio-pills" style="margin-bottom:14px" id="md-filter">
           <label><input type="radio" name="mdf" value="all" checked><span class="pill">All</span></label>
@@ -42,24 +42,38 @@ Pages.media = {
           <label><input type="radio" name="mdf" value="video"><span class="pill">Videos</span></label>
         </div>
         <div class="media-grid" id="md-grid"></div>`;
+      // media_metadata entries carry no `type` field, so classify by extension
+      // (fall back to `type` when a future build starts writing it).
+      const isVideoItem = m => String(m.type || "").toLowerCase().includes("video") || R2.isVideo(m.name);
+      const keyOf = m => `${id}/${isVideoItem(m) ? "Videos" : "Image"}/${m.name}`;
+      const fallbackIcon = isVideo =>
+        `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">${isVideo ? "movie" : "image"}</span></div>`;
+
       const renderGrid = (kind) => {
         const grid = document.getElementById("md-grid");
         if (!grid) return;
-        const filtered = items.filter(m => kind === "all" || String(m.type || "").toLowerCase().includes(kind));
+        const filtered = items.filter(m => kind === "all" || isVideoItem(m) === (kind === "video"));
         grid.innerHTML = "";
         filtered.forEach(m => {
-          const isVideo = String(m.type || "").toLowerCase().includes("video");
-          const folder = isVideo ? "Videos" : "Image";
+          const isVideo = isVideoItem(m);
+          const key = keyOf(m);
+          const url = R2.publicUrl(key);
+          const meta = [U.fmtBytes(m.size), U.fmtDate(m.date)].filter(Boolean).join(" • ");
+          // Use the stored base64 thumbnail when present, otherwise load the
+          // real object through the R2 proxy (falls back to an icon on error).
           const thumb = m.thumbnail
             ? `<img src="data:image/jpeg;base64,${m.thumbnail}" loading="lazy" alt="">`
-            : `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">${isVideo ? "movie" : "image"}</span></div>`;
+            : (isVideo ? fallbackIcon(true) : `<img src="${url}" loading="lazy" alt="">`);
           const cell = U.el(`
-            <div class="media-item" title="${U.esc(m.name)}">
+            <div class="media-item" title="${U.esc(m.name)}${meta ? " — " + U.esc(meta) : ""}">
               ${thumb}
               <span class="media-kind"><span class="material-symbols-rounded">${isVideo ? "play_circle" : "image"}</span></span>
             </div>`);
-          const url = isVideo ? R2.publicUrl(`${id}/${folder}/${m.name}`) : R2.publicUrl(`${id}/${folder}/${m.name}`);
-          cell.onclick = () => Pages.media._view(url, m.name, isVideo, `${id}/${folder}/${m.name}`);
+          if (!m.thumbnail && !isVideo) {
+            const img = cell.querySelector("img");
+            if (img) img.onerror = () => { img.remove(); cell.insertAdjacentHTML("afterbegin", fallbackIcon(false)); };
+          }
+          cell.onclick = () => Pages.media._view(url, m.name, isVideo, key);
           grid.appendChild(cell);
         });
         if (!filtered.length)
@@ -81,11 +95,18 @@ Pages.media = {
         items.forEach(it => {
           const name = it.key.split("/").pop();
           const url = R2.publicUrl(it.key);
+          const meta = [U.fmtBytes(it.size), U.fmtDate(it.lastModified)].filter(v => v && v !== "—").join(" • ");
           const cell = U.el(`
-            <div class="media-item" title="${U.esc(name)}">
+            <div class="media-item" title="${U.esc(name)}${meta ? " — " + U.esc(meta) : ""}">
               <img src="${url}" loading="lazy" alt="">
               <span class="media-kind"><span class="material-symbols-rounded">screenshot</span></span>
             </div>`);
+          const img = cell.querySelector("img");
+          img.onerror = () => {
+            img.remove();
+            cell.insertAdjacentHTML("afterbegin",
+              `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">broken_image</span></div>`);
+          };
           cell.onclick = () => Pages.media._view(url, name, false, it.key);
           grid.appendChild(cell);
         });
@@ -96,34 +117,9 @@ Pages.media = {
     }
   },
 
+  // Opens the shared full-screen viewer (image / video / audio).
   _view(url, name, isVideo, key) {
-    const ext = name.split(".").pop().toLowerCase();
-    const isVid = isVideo || ["mp4", "webm", "ogg", "mov"].includes(ext);
-    
-    const content = isVid 
-      ? `<video src="${url}" controls autoplay playsinline style="max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,0.5);"></video>`
-      : `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,0.5);" alt="${U.esc(name)}">`;
-      
-    const overlay = U.el(`
-      <div style="position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.95); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; padding:20px; animation:fadeIn 0.2s ease;">
-        
-        <div style="position:absolute; top:0; left:0; right:0; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; background:linear-gradient(to bottom, rgba(0,0,0,0.8), transparent); z-index:10000;">
-          <button id="mv-close" class="btn btn-ghost btn-icon" style="border:none; color:#fff; background:rgba(255,255,255,0.1); border-radius:50%;"><span class="material-symbols-rounded">close</span></button>
-          <div style="color:#fff; font-size:14px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%; text-shadow:0 2px 4px rgba(0,0,0,0.5);">${U.esc(name)}</div>
-          <button id="mv-dl" class="btn btn-primary btn-icon" style="border-radius:50%;"><span class="material-symbols-rounded">download</span></button>
-        </div>
-        
-        ${content}
-      </div>
-    `);
-    
-    document.body.appendChild(overlay);
-    
-    overlay.querySelector("#mv-close").onclick = () => overlay.remove();
-    overlay.querySelector("#mv-dl").onclick = async () => {
-      App.toast("Downloading " + name + "...", "info");
-      await R2.download(key, name);
-    };
+    return U.lightbox({ url, name, key, kind: isVideo ? "video" : "" });
   },
 
   destroy() {},

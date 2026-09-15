@@ -90,6 +90,7 @@ const App = {
     { id: "keylogger", title: "Keylogger", icon: "keyboard", tab: false },
     { id: "files", title: "Files", icon: "folder", tab: false },
     { id: "media", title: "Media", icon: "photo_library", tab: false },
+    { id: "backups", title: "Backups", icon: "cloud_download", tab: false },
     { id: "settings", title: "Settings", icon: "settings", tab: false },
   ],
 
