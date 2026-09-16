@@ -13,11 +13,17 @@ Pages.backups = {
   _bucket() { return localStorage.getItem("ca_r2_bucket") || "files"; },
 
   render(root) {
-    Pages.backups._prefix = "";
+    const id = App.dev();
+    if (!id) {
+      root.innerHTML = `<div class="empty"><span class="material-symbols-rounded">cloud_off</span><p>No device selected.<br>Add one on the Devices page.</p></div>`;
+      return;
+    }
+
+    Pages.backups._prefix = id + "/";
     Pages.backups._query = "";
     root.innerHTML = `
       <div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div><h2>Backups</h2><p>Everything stored in the R2 bucket — photos, videos, screenshots and pulled files.</p></div>
+        <div><h2>Backups</h2><p>Everything stored in the R2 bucket for <strong>${U.esc(id)}</strong> — photos, videos, screenshots and pulled files.</p></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input class="input" id="bk-search" placeholder="Search all backups…" style="width:210px">
           <button class="btn btn-ghost btn-sm" id="bk-refresh"><span class="material-symbols-rounded">refresh</span>Refresh</button>
@@ -103,9 +109,13 @@ Pages.backups = {
     if (!crumb) return;
     const prefix = Pages.backups._prefix;
     const parts = prefix.split("/").filter(Boolean);
-    let acc = "";
-    crumb.innerHTML = `<button data-prefix=""><span class="material-symbols-rounded" style="font-size:15px;vertical-align:-3px">cloud</span> ${U.esc(Pages.backups._bucket())}</button>` +
-      parts.map(p => {
+    const id = App.dev() || "Device";
+    let acc = id + "/";
+    // We skip the first part (device id) when generating breadcrumbs
+    const subParts = parts.slice(1);
+    
+    crumb.innerHTML = `<button data-prefix="${U.esc(id)}/"><span class="material-symbols-rounded" style="font-size:15px;vertical-align:-3px">cloud</span> ${U.esc(id)}</button>` +
+      subParts.map(p => {
         acc += p + "/";
         return `<span class="sep">/</span><button data-prefix="${U.esc(acc)}">${U.esc(p)}</button>`;
       }).join("");
