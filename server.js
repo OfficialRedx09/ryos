@@ -336,12 +336,21 @@ app.post('/api/livekit/token', checkAuth, async (req, res) => {
 });
 
 // S3 / R2 Setup
+//
+// IMPORTANT (512MB host): creating an S3Client is expensive — each one owns an
+// HTTP agent + connection pool. The Backups/Media pages fire hundreds of
+// concurrent thumbnail requests at /api/r2/file; if we built a new client per
+// request the process ran out of memory and crashed. So we cache ONE client
+// per (endpoint + credentials) tuple and reuse it for every request.
+const _s3Cache = new Map();
 function getS3Client(cfg) {
   if (!cfg.R2_HOST || !cfg.R2_ACCESS_KEY || !cfg.R2_SECRET_KEY) return null;
   let endpoint = cfg.R2_HOST;
   if (!endpoint.startsWith('http')) endpoint = 'https://' + endpoint;
-  
-  return new S3Client({
+  const cacheKey = `${endpoint}|${cfg.R2_ACCESS_KEY}|${cfg.R2_SECRET_KEY}`;
+  let client = _s3Cache.get(cacheKey);
+  if (client) return client;
+  client = new S3Client({
     region: 'auto',
     endpoint: endpoint,
     credentials: {
@@ -349,6 +358,32 @@ function getS3Client(cfg) {
       secretAccessKey: cfg.R2_SECRET_KEY,
     }
   });
+  _s3Cache.set(cacheKey, client);
+  return client;
+}
+
+// Concurrency limiter for R2 object streaming.
+//
+// The Backups/Media pages can request a few hundred thumbnails at once. Each
+// GetObject opens a streamed response that stays alive while bytes flow. With
+// no cap, Node buffers chunks for ALL of them simultaneously and the 512MB
+// instance OOMs. We allow only MAX_R2_STREAMS concurrent object streams; the
+// rest queue and run as slots free up. This bounds peak memory usage.
+const MAX_R2_STREAMS = 6;
+let _activeR2Streams = 0;
+const _r2WaitQueue = [];
+function acquireR2Slot() {
+  if (_activeR2Streams < MAX_R2_STREAMS) { _activeR2Streams++; return Promise.resolve(); }
+  return new Promise(resolve => _r2WaitQueue.push(resolve));
+}
+function releaseR2Slot() {
+  if (_r2WaitQueue.length) {
+    // Hand the slot straight to the next waiter (count stays the same).
+    const next = _r2WaitQueue.shift();
+    next();
+  } else {
+    _activeR2Streams = Math.max(0, _activeR2Streams - 1);
+  }
 }
 
 // Content-Type by extension, used when R2 stored no metadata.
@@ -462,12 +497,28 @@ app.get('/api/r2/stat', checkAuth, async (req, res) => {
 
 // Streams an object straight from R2 (images, videos, screenshots, downloads).
 // Range requests are forwarded so <video> seeking works.
+//
+// Memory safety (512MB host):
+//  - Gated by acquireR2Slot()/releaseR2Slot() so at most MAX_R2_STREAMS objects
+//    stream at once; excess requests queue instead of OOMing the process.
+//  - The body is ALWAYS streamed in chunks — we never call transformToByteArray
+//    (which buffers the entire object in RAM). Even a 500MB video streams
+//    through with near-constant memory.
 app.get('/api/r2/file', checkAuth, async (req, res) => {
   const cfg = await getClientConfig(req);
   const key = req.query.key;
   const s3 = getS3Client(cfg);
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   if (!key) return res.status(400).json({ error: 'Missing key' });
+
+  // Wait for a free streaming slot before we even touch R2.
+  await acquireR2Slot();
+  let released = false;
+  const release = () => { if (!released) { released = true; releaseR2Slot(); } };
+
+  // If the client disconnects while queued/streaming, release the slot.
+  const onAbort = () => release();
+  req.on('close', onAbort);
 
   try {
     const params = { Bucket: cfg.R2_BUCKET, Key: key };
@@ -493,15 +544,38 @@ app.get('/api/r2/file', checkAuth, async (req, res) => {
 
     const body = data.Body;
     if (body && typeof body.pipe === 'function') {
-      req.on('close', () => { try { body.destroy(); } catch (_) {} });
-      body.on('error', () => { try { res.destroy(); } catch (_) {} });
+      // Node Readable stream — pipe straight through.
+      body.on('error', () => { try { res.destroy(); } catch (_) {} release(); });
+      body.on('end', release);
+      body.on('close', release);
       body.pipe(res);
-    } else if (body && typeof body.transformToByteArray === 'function') {
-      res.end(Buffer.from(await body.transformToByteArray()));
+    } else if (body && (typeof body[Symbol.asyncIterator] === 'function' || typeof body.transformToWebStream === 'function')) {
+      // SDK streaming-blob variant: iterate chunks. NEVER buffer the whole
+      // object — write each chunk and respect backpressure (drain).
+      const stream = typeof body.transformToWebStream === 'function'
+        ? body.transformToWebStream()
+        : body;
+      try {
+        for await (const chunk of stream) {
+          if (res.writableEnded) break;
+          if (!res.write(Buffer.from(chunk))) {
+            await new Promise(r => res.once('drain', r));
+          }
+        }
+        if (!res.writableEnded) res.end();
+        release();
+      } catch (e) {
+        try { res.destroy(); } catch (_) {}
+        release();
+      }
     } else {
+      // No body (e.g. empty object) — just end.
       res.end();
+      release();
     }
   } catch (e) {
+    release();
+    req.off('close', onAbort);
     if (res.headersSent) { try { res.destroy(); } catch (_) {} return; }
     const notFound = /NoSuchKey|NotFound|404/.test(e.name || e.message || '');
     res.status(notFound ? 404 : 500).json({ error: e.message });

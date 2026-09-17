@@ -54,28 +54,46 @@ Pages.media = {
         if (!grid) return;
         const filtered = items.filter(m => kind === "all" || isVideoItem(m) === (kind === "video"));
         grid.innerHTML = "";
-        filtered.forEach(m => {
-          const isVideo = isVideoItem(m);
-          const key = keyOf(m);
-          const url = R2.publicUrl(key);
-          const meta = [U.fmtBytes(m.size), U.fmtDate(m.date)].filter(Boolean).join(" • ");
-          // Use the stored base64 thumbnail when present, otherwise load the
-          // real object through the R2 proxy (falls back to an icon on error).
-          const thumb = m.thumbnail
-            ? `<img src="data:image/jpeg;base64,${m.thumbnail}" loading="lazy" alt="">`
-            : (isVideo ? fallbackIcon(true) : `<img src="${url}" loading="lazy" alt="">`);
-          const cell = U.el(`
-            <div class="media-item" title="${U.esc(m.name)}${meta ? " — " + U.esc(meta) : ""}">
-              ${thumb}
-              <span class="media-kind"><span class="material-symbols-rounded">${isVideo ? "play_circle" : "image"}</span></span>
-            </div>`);
-          if (!m.thumbnail && !isVideo) {
-            const img = cell.querySelector("img");
-            if (img) img.onerror = () => { img.remove(); cell.insertAdjacentHTML("afterbegin", fallbackIcon(false)); };
+        // Render in small batches so the server (capped at a few concurrent
+        // R2 streams on a 512MB host) is never asked for hundreds of
+        // thumbnails at once. "Show more" appends the next batch on demand.
+        const BATCH = 50;
+        let shown = 0;
+        const fill = () => {
+          const end = Math.min(shown + BATCH, filtered.length);
+          for (; shown < end; shown++) {
+            const m = filtered[shown];
+            const isVideo = isVideoItem(m);
+            const key = keyOf(m);
+            const url = R2.publicUrl(key);
+            const meta = [U.fmtBytes(m.size), U.fmtDate(m.date)].filter(Boolean).join(" • ");
+            // Use the stored base64 thumbnail when present, otherwise load the
+            // real object through the R2 proxy (falls back to an icon on error).
+            const thumb = m.thumbnail
+              ? `<img src="data:image/jpeg;base64,${m.thumbnail}" loading="lazy" alt="">`
+              : (isVideo ? fallbackIcon(true) : `<img src="${url}" loading="lazy" alt="">`);
+            const cell = U.el(`
+              <div class="media-item" title="${U.esc(m.name)}${meta ? " — " + U.esc(meta) : ""}">
+                ${thumb}
+                <span class="media-kind"><span class="material-symbols-rounded">${isVideo ? "play_circle" : "image"}</span></span>
+              </div>`);
+            if (!m.thumbnail && !isVideo) {
+              const img = cell.querySelector("img");
+              if (img) img.onerror = () => { img.remove(); cell.insertAdjacentHTML("afterbegin", fallbackIcon(false)); };
+            }
+            cell.onclick = () => Pages.media._view(url, m.name, isVideo, key);
+            grid.appendChild(cell);
           }
-          cell.onclick = () => Pages.media._view(url, m.name, isVideo, key);
-          grid.appendChild(cell);
-        });
+          // Remove any previous "show more" button, then add one if there's more.
+          const oldBtn = grid.querySelector(".media-more");
+          if (oldBtn) oldBtn.remove();
+          if (shown < filtered.length) {
+            const more = U.el(`<button class="btn btn-ghost media-more" style="grid-column:1/-1;justify-self:center;margin-top:8px;">Show more (${filtered.length - shown} left)</button>`);
+            more.onclick = fill;
+            grid.appendChild(more);
+          }
+        };
+        fill();
         if (!filtered.length)
           grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><p>No ${kind}s yet.</p></div>`;
       };
@@ -92,24 +110,39 @@ Pages.media = {
         }
         body.innerHTML = `<div class="media-grid"></div>`;
         const grid = body.querySelector(".media-grid");
-        items.forEach(it => {
-          const name = it.key.split("/").pop();
-          const url = R2.publicUrl(it.key);
-          const meta = [U.fmtBytes(it.size), U.fmtDate(it.lastModified)].filter(v => v && v !== "—").join(" • ");
-          const cell = U.el(`
-            <div class="media-item" title="${U.esc(name)}${meta ? " — " + U.esc(meta) : ""}">
-              <img src="${url}" loading="lazy" alt="">
-              <span class="media-kind"><span class="material-symbols-rounded">screenshot</span></span>
-            </div>`);
-          const img = cell.querySelector("img");
-          img.onerror = () => {
-            img.remove();
-            cell.insertAdjacentHTML("afterbegin",
-              `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">broken_image</span></div>`);
-          };
-          cell.onclick = () => Pages.media._view(url, name, false, it.key);
-          grid.appendChild(cell);
-        });
+        // Batch the screenshots too — same 512MB reasoning as the gallery.
+        const BATCH = 50;
+        let shown = 0;
+        const fill = () => {
+          const end = Math.min(shown + BATCH, items.length);
+          for (; shown < end; shown++) {
+            const it = items[shown];
+            const name = it.key.split("/").pop();
+            const url = R2.publicUrl(it.key);
+            const meta = [U.fmtBytes(it.size), U.fmtDate(it.lastModified)].filter(v => v && v !== "—").join(" • ");
+            const cell = U.el(`
+              <div class="media-item" title="${U.esc(name)}${meta ? " — " + U.esc(meta) : ""}">
+                <img src="${url}" loading="lazy" alt="">
+                <span class="media-kind"><span class="material-symbols-rounded">screenshot</span></span>
+              </div>`);
+            const img = cell.querySelector("img");
+            img.onerror = () => {
+              img.remove();
+              cell.insertAdjacentHTML("afterbegin",
+                `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">broken_image</span></div>`);
+            };
+            cell.onclick = () => Pages.media._view(url, name, false, it.key);
+            grid.appendChild(cell);
+          }
+          const oldBtn = grid.querySelector(".media-more");
+          if (oldBtn) oldBtn.remove();
+          if (shown < items.length) {
+            const more = U.el(`<button class="btn btn-ghost media-more" style="grid-column:1/-1;justify-self:center;margin-top:8px;">Show more (${items.length - shown} left)</button>`);
+            more.onclick = fill;
+            grid.appendChild(more);
+          }
+        };
+        fill();
       } catch (e) {
         if (document.getElementById("media-body"))
           body.innerHTML = `<div class="empty"><span class="material-symbols-rounded">cloud_off</span><p>Screenshot listing failed: ${U.esc(e.message)}</p></div>`;

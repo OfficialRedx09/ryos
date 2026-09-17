@@ -177,23 +177,41 @@ Pages.backups = {
       grid.appendChild(cell);
     });
 
-    Pages.backups._files.forEach(f => {
-      const url = R2.publicUrl(f.key);
-      const meta = [U.fmtBytes(f.size), U.fmtDate(f.lastModified)].filter(v => v && v !== "—").join(" • ");
-      const kindIcon = R2.isVideo(f.key) ? "play_circle" : (R2.isAudio(f.key) ? "music_note" : "image");
-      const cell = U.el(`
-        <div class="media-item" title="${U.esc(f.name)}${meta ? " — " + U.esc(meta) : ""}">
-          ${R2.isImage(f.key) ? `<img src="${url}" loading="lazy" alt="">` : Pages.backups._iconTile(f.key)}
-          <span class="media-kind"><span class="material-symbols-rounded">${R2.isImage(f.key) ? kindIcon : R2.icon(f.key)}</span></span>
-        </div>`);
-      const img = cell.querySelector("img");
-      if (img) img.onerror = () => {
-        img.remove();
-        cell.insertAdjacentHTML("afterbegin", Pages.backups._iconTile(f.key));
-      };
-      cell.onclick = () => Pages.backups._open(f, url);
-      grid.appendChild(cell);
-    });
+    // Batch the file cells: rendering hundreds of <img> thumbnails at once
+    // asks the server (capped at a few concurrent R2 streams on a 512MB host)
+    // for all of them simultaneously. "Show more" reveals the next batch.
+    const files = Pages.backups._files;
+    const BATCH = 50;
+    let shown = 0;
+    const fill = () => {
+      const end = Math.min(shown + BATCH, files.length);
+      for (; shown < end; shown++) {
+        const f = files[shown];
+        const url = R2.publicUrl(f.key);
+        const meta = [U.fmtBytes(f.size), U.fmtDate(f.lastModified)].filter(v => v && v !== "—").join(" • ");
+        const kindIcon = R2.isVideo(f.key) ? "play_circle" : (R2.isAudio(f.key) ? "music_note" : "image");
+        const cell = U.el(`
+          <div class="media-item" title="${U.esc(f.name)}${meta ? " — " + U.esc(meta) : ""}">
+            ${R2.isImage(f.key) ? `<img src="${url}" loading="lazy" alt="">` : Pages.backups._iconTile(f.key)}
+            <span class="media-kind"><span class="material-symbols-rounded">${R2.isImage(f.key) ? kindIcon : R2.icon(f.key)}</span></span>
+          </div>`);
+        const img = cell.querySelector("img");
+        if (img) img.onerror = () => {
+          img.remove();
+          cell.insertAdjacentHTML("afterbegin", Pages.backups._iconTile(f.key));
+        };
+        cell.onclick = () => Pages.backups._open(f, url);
+        grid.appendChild(cell);
+      }
+      const oldBtn = grid.querySelector(".media-more");
+      if (oldBtn) oldBtn.remove();
+      if (shown < files.length) {
+        const more = U.el(`<button class="btn btn-ghost media-more" style="grid-column:1/-1;justify-self:center;margin-top:8px;">Show more (${files.length - shown} left)</button>`);
+        more.onclick = fill;
+        grid.appendChild(more);
+      }
+    };
+    fill();
 
     body.appendChild(grid);
   },
@@ -218,7 +236,22 @@ Pages.backups = {
       list.appendChild(row);
     });
 
-    Pages.backups._files.forEach(f => list.appendChild(Pages.backups._fileRow(f)));
+    // Batch the file rows too — list view also loads thumbnails via R2.publicUrl.
+    const files = Pages.backups._files;
+    const BATCH = 50;
+    let shown = 0;
+    const fill = () => {
+      const end = Math.min(shown + BATCH, files.length);
+      for (; shown < end; shown++) list.appendChild(Pages.backups._fileRow(files[shown]));
+      const oldBtn = list.querySelector(".media-more");
+      if (oldBtn) oldBtn.remove();
+      if (shown < files.length) {
+        const more = U.el(`<button class="btn btn-ghost media-more" style="align-self:center;margin-top:8px;">Show more (${files.length - shown} left)</button>`);
+        more.onclick = fill;
+        list.appendChild(more);
+      }
+    };
+    fill();
     body.appendChild(list);
   },
 
