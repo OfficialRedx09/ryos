@@ -27,6 +27,7 @@ Pages.backups = {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input class="input" id="bk-search" placeholder="Search all backups…" style="width:210px">
           <button class="btn btn-ghost btn-sm" id="bk-refresh"><span class="material-symbols-rounded">refresh</span>Refresh</button>
+          <button class="btn btn-primary btn-sm" id="bk-dlall" title="Download every file under this device"><span class="material-symbols-rounded">download</span>Download all</button>
         </div>
       </div>
       <div class="breadcrumb" id="bk-crumb"></div>
@@ -38,6 +39,7 @@ Pages.backups = {
       <div id="bk-body"></div>`;
 
     document.getElementById("bk-refresh").onclick = () => Pages.backups._load();
+    document.getElementById("bk-dlall").onclick = () => Pages.backups._downloadAll();
     document.getElementById("bk-views").addEventListener("change", e => {
       Pages.backups._view = e.target.value;
       Pages.backups._renderBody();
@@ -261,6 +263,52 @@ Pages.backups = {
   _download(f) {
     App.toast("Downloading " + f.name + "…", "info");
     R2.download(f.key, f.name);
+  },
+
+  // Downloads every file under the current device prefix, one by one.
+  // Paged through R2.listAll so buckets with >1000 objects are covered.
+  // A short pause between downloads lets the browser actually save each file
+  // (firing dozens of downloads at once gets throttled / dropped by the OS).
+  async _downloadAll() {
+    const id = App.dev();
+    if (!id) { App.toast("No device selected", "err"); return; }
+    const btn = document.getElementById("bk-dlall");
+    if (btn) { btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = '<span class="material-symbols-rounded spin">progress_activity</span>Preparing…'; }
+
+    let items = [];
+    try {
+      items = await R2.listAll(Pages.backups._prefix);
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+      App.toast("Could not list files: " + e.message, "err");
+      return;
+    }
+
+    if (!items.length) {
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+      App.toast("No files to download", "info");
+      return;
+    }
+
+    const total = items.length;
+    let done = 0, failed = 0;
+    App.toast(`Downloading ${total} files one by one…`, "info");
+
+    for (const f of items) {
+      if (!document.getElementById("bk-body")) return; // user left the page
+      if (btn) btn.innerHTML = `<span class="material-symbols-rounded spin">progress_activity</span>${done + failed + 1}/${total}`;
+      try {
+        await R2.download(f.key, f.name);
+        done++;
+      } catch (e) {
+        failed++;
+      }
+      // small delay so the browser commits each download
+      await new Promise(r => setTimeout(r, 700));
+    }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-rounded">download</span>Download all'; }
+    App.toast(`Done — downloaded ${done} of ${total} file${total === 1 ? "" : "s"}${failed ? ` (${failed} failed)` : ""}`, failed ? "info" : "ok");
   },
 
   async _remove(f) {

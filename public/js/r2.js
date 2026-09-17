@@ -55,6 +55,32 @@ const R2 = {
     return items;
   },
 
+  // Every file under a prefix, paging through ALL ContinuationTokens so buckets
+  // with more than 1000 objects are fully covered. Used by "Download all".
+  async listAll(prefix) {
+    const all = [];
+    let token = undefined;
+    do {
+      const params = { prefix: prefix || '' };
+      if (token) params.token = token;
+      const data = await R2._json('/api/r2/list', params);
+      (data.Contents || []).forEach(c => {
+        const key = c.Key || '';
+        if (key && !key.endsWith('/')) {
+          all.push({
+            key,
+            name: key.split('/').pop(),
+            size: c.Size === undefined ? null : Number(c.Size),
+            lastModified: c.LastModified || '',
+          });
+        }
+      });
+      token = data.IsTruncated ? data.NextContinuationToken : undefined;
+    } while (token);
+    all.sort((a, b) => (String(a.lastModified) < String(b.lastModified) ? 1 : -1));
+    return all;
+  },
+
   // One folder level: sub-folders + files (Backups page).
   async browse(prefix) {
     prefix = prefix || '';

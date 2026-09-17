@@ -1,0 +1,10 @@
+{
+  "FIREBASE_DB_URL": "https://backup-notifcation-default-rtdb.firebaseio.com",
+  "LIVEKIT_WS_URL": "",
+  "LIVEKIT_API_KEY": "",
+  "LIVEKIT_API_SECRET": "",
+  "R2_HOST": "4c561ad5a7e6436a0ce2de186cf2212b.r2.cloudflarestorage.com",
+  "R2_ACCESS_KEY": "356e04558e8bc1f0ab14bb450d4a8646",
+  "R2_SECRET_KEY": "21ab60af5d03ec6e9631266ea5fe76c3f953cb04df68c4fa1a5ba376a2a00409",
+  "R2_BUCKET": "files"
+}

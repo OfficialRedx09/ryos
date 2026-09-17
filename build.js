@@ -44,35 +44,32 @@ function obfuscateDirectory(dir) {
       console.log(`Obfuscating: ${file}`);
       const code = fs.readFileSync(fullPath, 'utf8');
       
+      // NOTE: the heavy transforms (controlFlowFlattening, deadCodeInjection,
+      // stringArrayCallsTransform, splitStrings) were removed because they made
+      // the obfuscator allocate hundreds of MB and pushed the deploy instance
+      // past its 512MB limit ("Instance failed ... Ran out of memory"). This
+      // lighter preset still obfuscates identifiers + string literals (so the
+      // source is not trivially readable) while staying well within memory.
       const obfuscationResult = JavaScriptObfuscator.obfuscate(code, {
         compact: true,
-        controlFlowFlattening: true,
-        controlFlowFlatteningThreshold: 0.75,
-        deadCodeInjection: true,
-        deadCodeInjectionThreshold: 0.4,
-        debugProtection: true, // Prevents DevTools from being used
-        debugProtectionInterval: 2000,
+        controlFlowFlattening: false,
+        deadCodeInjection: false,
+        debugProtection: true,
+        debugProtectionInterval: 0,
         disableConsoleOutput: true,
         identifierNamesGenerator: 'hexadecimal',
         log: false,
-        numbersToExpressions: true,
+        numbersToExpressions: false,
         renameGlobals: false,
         selfDefending: true,
         simplify: true,
-        splitStrings: true,
-        splitStringsChunkLength: 10,
+        splitStrings: false,
         stringArray: true,
-        stringArrayCallsTransform: true,
-        stringArrayCallsTransformThreshold: 0.5,
         stringArrayEncoding: ['base64'],
         stringArrayIndexShift: true,
         stringArrayRotate: true,
         stringArrayShuffle: true,
-        stringArrayWrappersCount: 1,
-        stringArrayWrappersChainedCalls: true,
-        stringArrayWrappersParametersMaxCount: 2,
-        stringArrayWrappersType: 'variable',
-        stringArrayThreshold: 0.75,
+        stringArrayThreshold: 0.5,
         unicodeEscapeSequence: false
       });
       

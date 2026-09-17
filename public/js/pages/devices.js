@@ -84,17 +84,59 @@ Pages.devices = {
             <span class="device-meta-item"><span class="material-symbols-rounded">battery_std</span>${U.esc(c.batt || "—")}</span>
             <span class="device-meta-item"><span class="material-symbols-rounded">schedule</span>${U.esc(c.last)}</span>
           </div>
-          <div style="margin-top:14px">
+          <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
             <span class="badge ${c.online ? "badge-on" : "badge-off"}">${c.online ? "ONLINE" : "OFFLINE"}</span>
+            <button class="btn btn-sm btn-ghost" data-a="remove" title="Remove device" style="margin-left:auto; color:var(--danger);">
+              <span class="material-symbols-rounded">delete</span>Remove
+            </button>
           </div>
         </div>`);
       card.onclick = (e) => {
+        if (e.target.closest('[data-a="remove"]')) return; // let the button handle it
         App.setCurrent(c.id);
         App.toast(`Controlling ${c.id}`, "info");
         App.go("overview");
       };
+      const rmBtn = card.querySelector('[data-a="remove"]');
+      if (rmBtn) rmBtn.onclick = (e) => {
+        e.stopPropagation();
+        Pages.devices._remove(c.id);
+      };
       grid.appendChild(card);
     });
+  },
+
+  // Remove a device: deletes ALL its Firebase data EXCEPT contacts
+  // (Contacts/{id}) and SMS (message/{id}), then drops it from the local
+  // list. Because devices are auto-discovered from the `run` node, deleting
+  // `run/{id}` stops the device from showing up again.
+  async _remove(id) {
+    const ok = await App.confirm({
+      title: "Remove device?",
+      body: `This deletes ALL cloud data for "${id}" (camera, screen, battery, device info, apps, etc.) but KEEPS its contacts and SMS lists. The device will no longer appear in the Devices list. This cannot be undone.`,
+      okText: "Remove",
+      danger: true,
+      icon: "delete_forever",
+    });
+    if (!ok) return;
+    App.toast("Removing " + id + "…", "info");
+    try {
+      const r = await fetch('/api/firebase/remove-device', {
+        method: 'POST',
+        headers: { ...FB._headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: id }),
+      });
+      if (!r.ok) {
+        let msg = 'HTTP ' + r.status;
+        try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      App.removeDevice(id);
+      App.toast("Device removed — contacts & SMS kept", "ok");
+      Pages.devices._load();
+    } catch (e) {
+      App.toast("Remove failed: " + e.message, "err");
+    }
   },
 
   destroy() { },
