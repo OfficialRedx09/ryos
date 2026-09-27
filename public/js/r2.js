@@ -133,20 +133,35 @@ const R2 = {
   // Same-origin download: the proxy returns the real bytes with the right
   // Content-Type, so the saved file is a usable image/video — not an HTML
   // error page saved under a .jpg name.
+  // Two attempts (the second cache-busted) each with a 90s timeout, so a
+  // busy proxy or a dropped connection can't hang the download forever.
   async download(key, filename) {
     const name = filename || String(key).split('/').pop();
-    const url = `${R2.publicUrl(key)}&dl=1&name=${encodeURIComponent(name)}`;
+    const base = `${R2.publicUrl(key)}&dl=1&name=${encodeURIComponent(name)}`;
+    const attempt = async (url) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 90_000);
+      try {
+        const r = await fetch(url, { signal: ctrl.signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const blob = await r.blob();
+        if (!blob.size) throw new Error('Empty file');
+        U.downloadBlob(blob, name);
+        return true;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
     try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const blob = await r.blob();
-      if (!blob.size) throw new Error('Empty file');
-      U.downloadBlob(blob, name);
-      return true;
-    } catch (e) {
-      App.toast("Direct download failed — opening in a new tab", "info");
-      window.open(url, "_blank");
-      return false;
+      return await attempt(base);
+    } catch (_) {
+      try {
+        return await attempt(`${base}&_r=${Date.now()}`);
+      } catch (e) {
+        App.toast("Direct download failed — opening in a new tab", "info");
+        window.open(base, "_blank");
+        return false;
+      }
     }
   },
 

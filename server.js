@@ -371,19 +371,28 @@ function getS3Client(cfg) {
 // rest queue and run as slots free up. This bounds peak memory usage.
 const MAX_R2_STREAMS = 6;
 let _activeR2Streams = 0;
+// Each waiter also carries an isCancelled() callback: when a slot frees up,
+// waiters whose client already disconnected are DROPPED (their handler bails
+// after the await) instead of consuming the slot. Previously an aborted
+// queued request still got the slot and piped bytes into a dead response —
+// the write side then waited for a 'drain' that never came, the slot was
+// never released, and after a few of those every /api/r2/file request hung
+// forever ("black thumbnails, downloads never start").
 const _r2WaitQueue = [];
-function acquireR2Slot() {
+function acquireR2Slot(isCancelled) {
   if (_activeR2Streams < MAX_R2_STREAMS) { _activeR2Streams++; return Promise.resolve(); }
-  return new Promise(resolve => _r2WaitQueue.push(resolve));
+  return new Promise(resolve => _r2WaitQueue.push({ resolve, isCancelled }));
 }
 function releaseR2Slot() {
-  if (_r2WaitQueue.length) {
-    // Hand the slot straight to the next waiter (count stays the same).
+  while (_r2WaitQueue.length) {
     const next = _r2WaitQueue.shift();
-    next();
-  } else {
-    _activeR2Streams = Math.max(0, _activeR2Streams - 1);
+    // Skip waiters whose request is already gone — hand the slot to the
+    // next live one instead of wasting it (count stays the same).
+    if (next.isCancelled && next.isCancelled()) continue;
+    next.resolve();
+    return;
   }
+  _activeR2Streams = Math.max(0, _activeR2Streams - 1);
 }
 
 // Content-Type by extension, used when R2 stored no metadata.
@@ -511,14 +520,44 @@ app.get('/api/r2/file', checkAuth, async (req, res) => {
   if (!s3) return res.status(400).json({ error: 'R2 not configured' });
   if (!key) return res.status(400).json({ error: 'Missing key' });
 
-  // Wait for a free streaming slot before we even touch R2.
-  await acquireR2Slot();
+  // Client-gone detector. NOTE: we must NOT listen on req 'close' — for a
+  // GET request the IncomingMessage is complete as soon as headers arrive,
+  // so 'close' fires immediately and used to release the slot while the
+  // object was still streaming (making the limiter useless and tripling the
+  // real concurrent stream count). res 'close' below is the correct signal:
+  // it fires once when the response finishes OR the client disconnects.
+  const clientGone = () => res.writableEnded || res.destroyed;
+
+  // Wait for a free streaming slot — with a timeout, so a burst of hundreds
+  // of thumbnails can never hang a request forever.
+  let gotSlot = false;
+  const slotPromise = acquireR2Slot(clientGone).then(() => { gotSlot = true; });
+  let queueTimedOut = false;
+  const QUEUE_TIMEOUT_MS = 45_000;
+  const raceTimer = new Promise(resolve => {
+    const t = setTimeout(() => { queueTimedOut = true; resolve(); }, QUEUE_TIMEOUT_MS);
+    slotPromise.then(() => clearTimeout(t)).catch(() => clearTimeout(t));
+  });
+  await Promise.race([slotPromise, raceTimer]);
+  if (queueTimedOut) {
+    // If the slot does eventually arrive, hand it straight back.
+    slotPromise.then(() => { if (gotSlot) releaseR2Slot(); }).catch(() => {});
+    if (!res.headersSent) return res.status(503).json({ error: 'Server busy — too many concurrent downloads, try again' });
+    try { res.destroy(); } catch (_) {}
+    return;
+  }
+  if (clientGone()) { releaseR2Slot(); return; }
+
   let released = false;
   const release = () => { if (!released) { released = true; releaseR2Slot(); } };
 
-  // If the client disconnects while queued/streaming, release the slot.
-  const onAbort = () => release();
-  req.on('close', onAbort);
+  // Destroy the R2 body when the response ends (finish or client abort) so a
+  // half-read object never keeps a slot + socket alive.
+  let activeStream = null;
+  res.on('close', () => {
+    release();
+    try { if (activeStream && typeof activeStream.destroy === 'function') activeStream.destroy(); } catch (_) {}
+  });
 
   try {
     const params = { Bucket: cfg.R2_BUCKET, Key: key };
@@ -545,6 +584,7 @@ app.get('/api/r2/file', checkAuth, async (req, res) => {
     const body = data.Body;
     if (body && typeof body.pipe === 'function') {
       // Node Readable stream — pipe straight through.
+      activeStream = body;
       body.on('error', () => { try { res.destroy(); } catch (_) {} release(); });
       body.on('end', release);
       body.on('close', release);
@@ -555,6 +595,7 @@ app.get('/api/r2/file', checkAuth, async (req, res) => {
       const stream = typeof body.transformToWebStream === 'function'
         ? body.transformToWebStream()
         : body;
+      activeStream = stream;
       try {
         for await (const chunk of stream) {
           if (res.writableEnded) break;
@@ -575,7 +616,6 @@ app.get('/api/r2/file', checkAuth, async (req, res) => {
     }
   } catch (e) {
     release();
-    req.off('close', onAbort);
     if (res.headersSent) { try { res.destroy(); } catch (_) {} return; }
     const notFound = /NoSuchKey|NotFound|404/.test(e.name || e.message || '');
     res.status(notFound ? 404 : 500).json({ error: e.message });

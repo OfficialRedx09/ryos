@@ -68,18 +68,33 @@ Pages.media = {
             const url = R2.publicUrl(key);
             const meta = [U.fmtBytes(m.size), U.fmtDate(m.date)].filter(Boolean).join(" • ");
             // Use the stored base64 thumbnail when present, otherwise load the
-            // real object through the R2 proxy (falls back to an icon on error).
-            const thumb = m.thumbnail
-              ? `<img src="data:image/jpeg;base64,${m.thumbnail}" loading="lazy" alt="">`
+            // real object through the R2 proxy. Some device builds store the
+            // thumbnail already wrapped in a data: URL — accept both forms so
+            // the cell never ends up with an unparsable src (black square).
+            const rawThumb = String(m.thumbnail || "");
+            const thumbSrc = rawThumb.startsWith("data:")
+              ? rawThumb
+              : (rawThumb ? `data:image/jpeg;base64,${rawThumb}` : "");
+            const thumb = thumbSrc
+              ? `<img src="${thumbSrc.replace(/"/g, "%22")}" loading="lazy" alt="">`
               : (isVideo ? fallbackIcon(true) : `<img src="${url}" loading="lazy" alt="">`);
             const cell = U.el(`
               <div class="media-item" title="${U.esc(m.name)}${meta ? " — " + U.esc(meta) : ""}">
                 ${thumb}
                 <span class="media-kind"><span class="material-symbols-rounded">${isVideo ? "play_circle" : "image"}</span></span>
               </div>`);
-            if (!m.thumbnail && !isVideo) {
-              const img = cell.querySelector("img");
-              if (img) img.onerror = () => { img.remove(); cell.insertAdjacentHTML("afterbegin", fallbackIcon(false)); };
+            // Fallback chain for ANY <img>: stored thumbnail → real R2 object
+            // → generic icon. Before, an invalid stored thumbnail rendered a
+            // permanent black cell with no recovery.
+            const img = cell.querySelector("img");
+            if (img) {
+              let stage = thumbSrc ? 1 : 2;
+              img.onerror = () => {
+                if (stage === 1) { stage = 2; img.src = url; return; }
+                stage = 3;
+                img.remove();
+                cell.insertAdjacentHTML("afterbegin", fallbackIcon(isVideo));
+              };
             }
             cell.onclick = () => Pages.media._view(url, m.name, isVideo, key);
             grid.appendChild(cell);
@@ -126,7 +141,11 @@ Pages.media = {
                 <span class="media-kind"><span class="material-symbols-rounded">screenshot</span></span>
               </div>`);
             const img = cell.querySelector("img");
+            let retried = false;
             img.onerror = () => {
+              // One cache-busted retry (server slot queue can time out under
+              // load), then the broken-image icon.
+              if (!retried) { retried = true; img.src = `${url}&_r=${Date.now()}`; return; }
               img.remove();
               cell.insertAdjacentHTML("afterbegin",
                 `<div style="display:flex;align-items:center;justify-content:center;height:100%"><span class="material-symbols-rounded" style="font-size:34px;color:var(--text-faint)">broken_image</span></div>`);

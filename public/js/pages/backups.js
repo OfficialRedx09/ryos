@@ -196,10 +196,16 @@ Pages.backups = {
             <span class="media-kind"><span class="material-symbols-rounded">${R2.isImage(f.key) ? kindIcon : R2.icon(f.key)}</span></span>
           </div>`);
         const img = cell.querySelector("img");
-        if (img) img.onerror = () => {
-          img.remove();
-          cell.insertAdjacentHTML("afterbegin", Pages.backups._iconTile(f.key));
-        };
+        if (img) {
+          let retried = false;
+          img.onerror = () => {
+            // One cache-busted retry (a queued server slot can time out under
+            // load) before falling back to the file-type icon tile.
+            if (!retried) { retried = true; img.src = `${url}&_r=${Date.now()}`; return; }
+            img.remove();
+            cell.insertAdjacentHTML("afterbegin", Pages.backups._iconTile(f.key));
+          };
+        }
         cell.onclick = () => Pages.backups._open(f, url);
         grid.appendChild(cell);
       }
@@ -278,9 +284,13 @@ Pages.backups = {
       </div>`);
 
     const img = row.querySelector("img");
-    if (img) img.onerror = () => {
-      img.replaceWith(U.el(`<span class="material-symbols-rounded">${R2.icon(f.key)}</span>`));
-    };
+    if (img) {
+      let retried = false;
+      img.onerror = () => {
+        if (!retried) { retried = true; img.src = `${url}&_r=${Date.now()}`; return; }
+        img.replaceWith(U.el(`<span class="material-symbols-rounded">${R2.icon(f.key)}</span>`));
+      };
+    }
     const viewBtn = row.querySelector('[data-a="view"]');
     if (viewBtn) viewBtn.onclick = () => Pages.backups._open(f, url);
     row.querySelector('[data-a="dl"]').onclick = () => Pages.backups._download(f);
