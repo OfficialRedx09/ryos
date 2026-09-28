@@ -62,6 +62,15 @@ Pages.settings = {
         <button class="btn btn-ghost" id="st-change-pin"><span class="material-symbols-rounded">pin</span>${App.hasPin() ? "Change PIN" : "Set PIN"}</button>
         ${App.hasPin() ? `<button class="btn btn-ghost" id="st-remove-pin" style="color:var(--danger)"><span class="material-symbols-rounded">lock_open</span>Remove PIN</button>` : ""}
         <button class="btn btn-ghost" id="st-lock-now"><span class="material-symbols-rounded">lock</span>Lock now</button>
+      </div>
+
+      <div class="section-label">Logs</div>
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+          <h3 class="card-title" style="margin:0;"><span class="material-symbols-rounded">history</span>Activity log</h3>
+          <button class="btn btn-ghost btn-sm" id="st-clear-logs"><span class="material-symbols-rounded">delete_sweep</span>Clear</button>
+        </div>
+        <div id="st-logs" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
       </div>`;
 
     if (id) {
@@ -72,15 +81,15 @@ Pages.settings = {
 
       document.getElementById("st-img").onchange = e =>
         FB.put(`upload/${id}/img`, e.target.checked ? 1 : 0)
-          .then(() => App.toast("Image backup " + (e.target.checked ? "on" : "off"), "ok"))
+          .then(() => { App.toast("Image backup " + (e.target.checked ? "on" : "off"), "ok"); Log.add("Image backup " + (e.target.checked ? "on" : "off")); })
           .catch(err => App.toast("Failed: " + err.message, "err"));
       document.getElementById("st-vid").onchange = e =>
         FB.put(`upload/${id}/video`, e.target.checked ? 1 : 0)
-          .then(() => App.toast("Video backup " + (e.target.checked ? "on" : "off"), "ok"))
+          .then(() => { App.toast("Video backup " + (e.target.checked ? "on" : "off"), "ok"); Log.add("Video backup " + (e.target.checked ? "on" : "off")); })
           .catch(err => App.toast("Failed: " + err.message, "err"));
       document.getElementById("st-unlock").onchange = e =>
         FB.put(`unlock/${id}/islock`, e.target.checked ? 1 : 0)
-          .then(() => App.toast("Uninstall block " + (e.target.checked ? "on" : "off"), "ok"))
+          .then(() => { App.toast("Uninstall block " + (e.target.checked ? "on" : "off"), "ok"); Log.add("Uninstall block " + (e.target.checked ? "on" : "off")); })
           .catch(err => App.toast("Failed: " + err.message, "err"));
 
       document.getElementById("st-pin-save").onclick = async () => {
@@ -89,6 +98,7 @@ Pages.settings = {
         try {
           await FB.put(`pin/${id}/code`, v);
           App.toast("Device PIN updated", "ok");
+          Log.add("Device PIN updated");
         } catch (e) { App.toast("Failed: " + e.message, "err"); }
       };
 
@@ -102,6 +112,7 @@ Pages.settings = {
         try {
           await FB.put(`Force_kill/${id}/kill`, 1);
           App.toast("Force kill sent", "ok");
+          Log.add("Force kill sent");
         } catch (e) { App.toast("Failed: " + e.message, "err"); }
       };
     }
@@ -117,6 +128,40 @@ Pages.settings = {
     const rm = document.getElementById("st-remove-pin");
     if (rm) rm.onclick = () => App.showPin("remove");
     document.getElementById("st-lock-now").onclick = () => App.lock();
+
+    Pages.settings._renderLogs();
+    document.getElementById("st-clear-logs").onclick = () => {
+      Log.clear();
+      Pages.settings._renderLogs();
+      App.toast("Logs cleared", "ok");
+    };
+  },
+
+  _renderLogs() {
+    const box = document.getElementById("st-logs");
+    if (!box) return;
+    const logs = Log.list();
+    if (!logs.length) {
+      box.innerHTML = `<div class="empty" style="padding:18px 0"><span class="material-symbols-rounded">history</span><p>No activity logged yet.</p></div>`;
+      return;
+    }
+    const today = new Date().toDateString();
+    let lastDay = "";
+    box.innerHTML = logs.map(e => {
+      const d = new Date(e.ts);
+      let sep = "";
+      if (d.toDateString() !== today) {
+        const ds = Log.date(e.ts);
+        if (ds !== lastDay) {
+          sep = `<div style="margin:6px 0 0;font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;">${U.esc(ds)}</div>`;
+          lastDay = ds;
+        }
+      }
+      return `${sep}<div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--text-faint);font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;">-${U.esc(Log.time(e.ts))}</span>
+        <span style="flex:1;line-height:1.4;">${U.esc(e.msg)}</span>
+      </div>`;
+    }).join("");
   },
 
   destroy() {},

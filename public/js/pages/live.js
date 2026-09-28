@@ -308,6 +308,7 @@ Pages.live = {
       btn.innerHTML = `<span class="material-symbols-rounded">stop</span>`;
       const ph = document.querySelector("#lv-placeholder p");
       if (ph) ph.textContent = "Waiting for stream…";
+      Log.add("Screen mirror request sent");
       App.toast("Mirror requested — waiting for stream…", "ok");
     } catch (e) {
       App.toast("Start failed: " + e.message, "err");
@@ -321,6 +322,7 @@ Pages.live = {
     Pages.live._screenOn = false;
     try { await FB.put(`Screen_rec/${Pages.live._id}/ismirror`, 0); } catch (_) {}
     if (!Pages.live._camOn) await LK.disconnectMonitor();
+    Log.add("Screen mirror stopped");
     Pages.live._renderTab();
   },
 
@@ -342,6 +344,7 @@ Pages.live = {
       btn.innerHTML = `<span class="material-symbols-rounded">stop</span>`;
       const ph = document.querySelector("#lv-cam-placeholder p");
       if (ph) ph.textContent = "Waiting for stream…";
+      Log.add("Camera request sent");
       App.toast("Camera requested — waiting for stream…", "ok");
     } catch (e) {
       App.toast("Start failed: " + e.message, "err");
@@ -355,6 +358,7 @@ Pages.live = {
     Pages.live._camOn = false;
     try { await FB.put(`Camera_rec/${Pages.live._id}/Iscamera`, 0); } catch (_) {}
     if (!Pages.live._screenOn) await LK.disconnectMonitor();
+    Log.add("Camera stopped");
     Pages.live._renderTab();
   },
 
@@ -374,6 +378,7 @@ Pages.live = {
       if (st) { st.className = "badge badge-on"; st.textContent = "LIVE"; }
       btn.className = "btn btn-danger btn-block";
       btn.innerHTML = `<span class="material-symbols-rounded">stop</span>Stop listening`;
+      Log.add("Voice (mic) request sent");
       App.toast("Mic requested — audio starts shortly…", "ok");
     } catch (e) {
       App.toast("Start failed: " + e.message, "err");
@@ -387,6 +392,7 @@ Pages.live = {
     Pages.live._voiceOn = false;
     try { await FB.put(`Voice_rec/${Pages.live._id}/Istransmit`, 0); } catch (_) {}
     await LK.disconnectVoice();
+    Log.add("Voice (mic) stopped");
     Pages.live._renderTab();
   },
 

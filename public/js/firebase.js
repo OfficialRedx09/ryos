@@ -201,3 +201,44 @@ const U = {
     return "fnv" + h.toString(16);
   },
 };
+
+/* ───────────────────────── activity log ───────────────────────── */
+// Local activity log for the Settings → Logs panel. Stores recent user actions
+// (command clicks) with a 12-hour timestamp so the admin can see what was
+// triggered and when.
+const Log = {
+  KEY: "ca_activity_log",
+  MAX: 500,
+
+  list() {
+    try { return JSON.parse(localStorage.getItem(Log.KEY) || "[]"); }
+    catch (_) { return []; }
+  },
+
+  add(msg) {
+    try {
+      const logs = Log.list();
+      logs.unshift({ ts: Date.now(), msg: String(msg == null ? "" : msg) });
+      if (logs.length > Log.MAX) logs.length = Log.MAX;
+      localStorage.setItem(Log.KEY, JSON.stringify(logs));
+    } catch (_) { }
+  },
+
+  clear() {
+    try { localStorage.removeItem(Log.KEY); } catch (_) { }
+  },
+
+  // "01:20 AM" (12-hour)
+  time(ts) {
+    return new Date(ts).toLocaleTimeString(undefined, {
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    });
+  },
+
+  // "28 Sep 2026" — date only
+  date(ts) {
+    return new Date(ts).toLocaleDateString(undefined, {
+      day: "2-digit", month: "short", year: "numeric",
+    });
+  },
+};

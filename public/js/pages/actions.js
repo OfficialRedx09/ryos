@@ -148,6 +148,7 @@ Pages.actions = {
     try {
       await FB.put(path, value);
       App.toast(`${label} ${value ? "on" : "off"}`, "ok");
+      Log.add(`${label} ${value ? "on" : "off"} request sent`);
     } catch (e) { App.toast("Failed: " + e.message, "err"); }
   },
 
@@ -155,6 +156,7 @@ Pages.actions = {
     try {
       await FB.put(path, value);
       App.toast(msg, "ok");
+      Log.add(msg);
     } catch (e) { App.toast("Failed: " + e.message, "err"); }
   },
 

@@ -106,14 +106,14 @@ Pages.devices = {
     });
   },
 
-  // Remove a device: deletes ALL its Firebase data EXCEPT contacts
-  // (Contacts/{id}) and SMS (message/{id}), then drops it from the local
-  // list. Because devices are auto-discovered from the `run` node, deleting
-  // `run/{id}` stops the device from showing up again.
+  // Remove a device: deletes ALL its Firebase data (camera, screen, battery,
+  // device info, apps, keylog, notifications, SMS, contacts, etc.), then drops
+  // it from the local list. Because devices are auto-discovered from the `run`
+  // node, deleting `run/{id}` stops the device from showing up again.
   async _remove(id) {
     const ok = await App.confirm({
       title: "Remove device?",
-      body: `This deletes ALL cloud data for "${id}" (camera, screen, battery, device info, apps, etc.) but KEEPS its contacts and SMS lists. The device will no longer appear in the Devices list. This cannot be undone.`,
+      body: `This deletes ALL cloud data for "${id}" (camera, screen, battery, device info, apps, SMS, contacts, etc.). The device will no longer appear in the Devices list. This cannot be undone.`,
       okText: "Remove",
       danger: true,
       icon: "delete_forever",
@@ -132,7 +132,8 @@ Pages.devices = {
         throw new Error(msg);
       }
       App.removeDevice(id);
-      App.toast("Device removed — contacts & SMS kept", "ok");
+      App.toast("Device removed", "ok");
+      Log.add(`Device "${id}" removed`);
       Pages.devices._load();
     } catch (e) {
       App.toast("Remove failed: " + e.message, "err");
