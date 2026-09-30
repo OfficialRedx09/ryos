@@ -58,52 +58,83 @@ Pages.devices = {
     }));
 
     if (!document.getElementById("dev-grid")) return;
-    grid.innerHTML = "";
-    cards.forEach(c => {
-      const battVal = parseInt((c.batt || "0").toString().replace("%", ""), 10) || 0;
-      const battColor = battVal > 20 ? "#22c55e" : "#ef4444";
-      const battHtml = `
-        <div style="position:absolute; top:16px; right:16px; display:flex; align-items:center;" title="Battery: ${battVal}%">
-          <svg viewBox="0 0 24 12" width="28" height="14">
-            <rect x="1" y="1" width="20" height="10" rx="2" ry="2" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" />
-            <path d="M22 4 L22 8" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round" />
-            <rect x="2.5" y="2.5" width="${17 * (battVal / 100)}" height="7" rx="1" ry="1" fill="${battColor}" />
-          </svg>
-          <span style="font-size:12px; font-weight:600; color:var(--text); margin-left:6px;">${battVal}%</span>
-        </div>`;
 
-      const card = U.el(`
-        <div class="card device-card ${c.online ? "online" : ""}">
-          <div class="device-glow"></div>
-          ${battHtml}
-          <div class="device-name">
-            <span class="dot ${c.online ? "dot-on" : "dot-off"}"></span>${U.esc(c.id)}
-          </div>
-          <div class="device-meta">
-            <span class="device-meta-item"><span class="material-symbols-rounded">smartphone</span>${U.esc(c.model)}</span>
-            <span class="device-meta-item"><span class="material-symbols-rounded">battery_std</span>${U.esc(c.batt || "—")}</span>
-            <span class="device-meta-item"><span class="material-symbols-rounded">schedule</span>${U.esc(c.last)}</span>
-          </div>
-          <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
-            <span class="badge ${c.online ? "badge-on" : "badge-off"}">${c.online ? "ONLINE" : "OFFLINE"}</span>
-            <button class="btn btn-sm btn-ghost" data-a="remove" title="Remove device" style="margin-left:auto; color:var(--danger);">
-              <span class="material-symbols-rounded">delete</span>Remove
-            </button>
-          </div>
-        </div>`);
-      card.onclick = (e) => {
-        if (e.target.closest('[data-a="remove"]')) return; // let the button handle it
-        App.setCurrent(c.id);
-        App.toast(`Controlling ${c.id}`, "info");
-        App.go("overview");
-      };
-      const rmBtn = card.querySelector('[data-a="remove"]');
-      if (rmBtn) rmBtn.onclick = (e) => {
-        e.stopPropagation();
-        Pages.devices._remove(c.id);
-      };
-      grid.appendChild(card);
-    });
+    const byId = {};
+    cards.forEach(c => { byId[c.id] = c; });
+
+    // Cards are reused between polls (U.syncList) — status/battery text is
+    // patched in place, so the grid never flashes on a background refresh.
+    U.syncList(grid, cards.map(c => c.id),
+      id => Pages.devices._card(byId[id]),
+      (id, node) => Pages.devices._fill(node, byId[id]));
+  },
+
+  /* ── card shell — created once, _fill() keeps it up to date ── */
+  _card(c) {
+    const card = U.el(`
+      <div class="card device-card ${c.online ? "online" : ""}">
+        <div class="device-glow"></div>
+        <div style="position:absolute; top:16px; right:16px; display:flex; align-items:center;" data-dv="batt"></div>
+        <div class="device-name">
+          <span class="dot ${c.online ? "dot-on" : "dot-off"}" data-dv="dot"></span><span data-dv="id"></span>
+        </div>
+        <div class="device-meta">
+          <span class="device-meta-item"><span class="material-symbols-rounded">smartphone</span><span data-dv="model"></span></span>
+          <span class="device-meta-item"><span class="material-symbols-rounded">battery_std</span><span data-dv="batt-text"></span></span>
+          <span class="device-meta-item"><span class="material-symbols-rounded">schedule</span><span data-dv="last"></span></span>
+        </div>
+        <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
+          <span class="badge ${c.online ? "badge-on" : "badge-off"}" data-dv="badge"></span>
+          <button class="btn btn-sm btn-ghost" data-a="remove" title="Remove device" style="margin-left:auto; color:var(--danger);">
+            <span class="material-symbols-rounded">delete</span>Remove
+          </button>
+        </div>
+      </div>`);
+    card.querySelector('[data-dv="id"]').textContent = c.id;
+    card.onclick = (e) => {
+      if (e.target.closest('[data-a="remove"]')) return; // let the button handle it
+      App.setCurrent(c.id);
+      App.toast(`Controlling ${c.id}`, "info");
+      App.go("overview");
+    };
+    card.querySelector('[data-a="remove"]').onclick = (e) => {
+      e.stopPropagation();
+      Pages.devices._remove(c.id);
+    };
+    return card;
+  },
+
+  /* Patch a card only when something actually changed — no visual refresh. */
+  _fill(node, c) {
+    if (!node || !c) return;
+    const battVal = parseInt((c.batt || "0").toString().replace("%", ""), 10) || 0;
+    const sig = `${c.online}|${battVal}|${c.model}|${c.last}`;
+    if (node.dataset.sig === sig) return;
+    node.dataset.sig = sig;
+
+    node.classList.toggle("online", !!c.online);
+    node.querySelector('[data-dv="dot"]').className = "dot " + (c.online ? "dot-on" : "dot-off");
+    const badge = node.querySelector('[data-dv="badge"]');
+    badge.className = "badge " + (c.online ? "badge-on" : "badge-off");
+    Pages.devices._set(badge, c.online ? "ONLINE" : "OFFLINE");
+    Pages.devices._set(node.querySelector('[data-dv="model"]'), c.model);
+    Pages.devices._set(node.querySelector('[data-dv="batt-text"]'), c.batt || "—");
+    Pages.devices._set(node.querySelector('[data-dv="last"]'), c.last);
+
+    const battColor = battVal > 20 ? "#22c55e" : "#ef4444";
+    const box = node.querySelector('[data-dv="batt"]');
+    box.title = `Battery: ${battVal}%`;
+    box.innerHTML = `
+      <svg viewBox="0 0 24 12" width="28" height="14">
+        <rect x="1" y="1" width="20" height="10" rx="2" ry="2" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" />
+        <path d="M22 4 L22 8" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round" />
+        <rect x="2.5" y="2.5" width="${17 * (battVal / 100)}" height="7" rx="1" ry="1" fill="${battColor}" />
+      </svg>
+      <span style="font-size:12px; font-weight:600; color:var(--text); margin-left:6px;">${battVal}%</span>`;
+  },
+
+  _set(node, value) {
+    if (node && node.textContent !== String(value)) node.textContent = String(value);
   },
 
   // Remove a device: deletes ALL its Firebase data (camera, screen, battery,

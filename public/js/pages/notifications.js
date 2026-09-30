@@ -1,12 +1,18 @@
 /* Notifications page — live feed mirrored from the child device.
-   Source: Notifications/{deviceId}/{millis}_{title} = {title,text,time}. */
+   Source: Notifications/{deviceId}/{millis}_{title} = {title,text,time}.
+
+   Updates are silent: a background poll only ADDS the new notifications and
+   patches changed ones in place (U.syncList), so the list never re-renders,
+   never dims/blinks and keeps expanded rows + scroll position. */
 Pages.notifications = {
   _knownKeys: new Set(),
+  _byKey: {},
 
   render(root) {
     const id = App.dev();
     if (!id) { root.innerHTML = `<div class="empty"><span class="material-symbols-rounded">notifications_off</span><p>No device selected.</p></div>`; return; }
     Pages.notifications._knownKeys = new Set();
+    Pages.notifications._byKey = {};
     root.innerHTML = `
       <div class="page-head" style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div><h2>Notifications</h2><p>Live mirror from ${U.esc(id)} — refreshes every 5s.</p></div>
@@ -43,34 +49,54 @@ Pages.notifications = {
       }
     }
     Pages.notifications._knownKeys = new Set(entries.map(e => e.key));
+    const byKey = {};
+    entries.forEach(e => { byKey[e.key] = e; });
+    Pages.notifications._byKey = byKey;
     Pages.notifications._all = entries;
     Pages.notifications._render();
   },
 
   _filter(q) { Pages.notifications._render(q.toLowerCase()); },
 
+  /* Patch the list in place — existing rows are reused so nothing re-animates. */
   _render(q = "") {
     const list = document.getElementById("nt-list");
     if (!list) return;
     const all = (Pages.notifications._all || [])
       .filter(e => !q || e.title.toLowerCase().includes(q) || e.text.toLowerCase().includes(q))
       .slice(0, 150);
-    if (!all.length) {
-      list.innerHTML = `<div class="empty"><span class="material-symbols-rounded">notifications_none</span><p>No notifications ${q ? "match your search" : "mirrored yet"}.</p></div>`;
-      return;
-    }
-    list.innerHTML = all.map(e => `
-      <div class="list-row expandable" data-key="${U.esc(e.key)}">
+    U.syncList(list, all.map(e => e.key),
+      key => Pages.notifications._row(key),
+      (key, node) => Pages.notifications._fill(node, Pages.notifications._byKey[key]),
+      {
+        empty: `<div class="empty"><span class="material-symbols-rounded">notifications_none</span><p>No notifications ${q ? "match your search" : "mirrored yet"}.</p></div>`,
+        emptySig: q ? "search" : "none",
+      });
+  },
+
+  _row() {
+    const row = U.el(`
+      <div class="list-row expandable">
         <span class="material-symbols-rounded">notifications</span>
         <div class="list-row-main">
-          <div class="list-row-title">${U.esc(e.title || "(no title)")}</div>
-          <div class="list-row-body"><div>${U.esc(e.text)}</div></div>
+          <div class="list-row-title" data-nt="title"></div>
+          <div class="list-row-body"><div data-nt="text"></div></div>
         </div>
-        <span style="font-size:11px;color:var(--text-faint);white-space:nowrap;flex-shrink:0">${U.esc(e.time)}</span>
-      </div>`).join("");
-    list.querySelectorAll(".expandable").forEach(row => {
-      row.onclick = () => row.classList.toggle("expanded");
-    });
+        <span style="font-size:11px;color:var(--text-faint);white-space:nowrap;flex-shrink:0" data-nt="time"></span>
+      </div>`);
+    row.onclick = () => row.classList.toggle("expanded");
+    return row;
+  },
+
+  /* Write the values only when they actually differ — the row is never rebuilt. */
+  _fill(node, e) {
+    if (!node || !e) return;
+    const sig = `${e.millis}|${e.title}|${e.text}|${e.time}`;
+    if (node.dataset.sig === sig) return;
+    node.dataset.sig = sig;
+    node.querySelector('[data-nt="title"]').textContent = e.title || "(no title)";
+    node.querySelector('[data-nt="text"]').textContent = e.text;
+    node.querySelector('[data-nt="time"]').textContent = e.time;
   },
 
   destroy() {},

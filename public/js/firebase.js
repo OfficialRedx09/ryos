@@ -132,6 +132,95 @@ const U = {
     return t.content.firstElementChild;
   },
 
+  /* ─────────────── silent list reconciliation ───────────────
+     Keeps a list container in sync with the data WITHOUT re-rendering it.
+     Rows that are still there are reused, so expanded rows, scroll position,
+     text selection and the CSS entry animations (fadeUp / ovIn / kl-msg-in …)
+     are never replayed — new rows appear, changed rows are patched in place,
+     gone rows disappear. When the data didn't change the DOM isn't touched at
+     all (no blink on background polls).
+
+       container        element that holds the rows
+       keys             desired row order (string | number)
+       ensure(key)      create + return the row element for a key (once)
+       refresh(key,el)  patch a row's contents in place (every pass)
+       opts.empty       HTML for ONE root element shown when there are no rows
+       opts.emptySig    changes → the empty element is rebuilt (message changed)
+
+     Nodes with the class `sync-keep` (or `sync-empty`) are ignored by the
+     reconciler so a page can keep static decorations next to the rows. */
+  syncList(container, keys, ensure, refresh, opts = {}) {
+    if (!container) return false;
+    let changed = false;
+
+    const wanted = [];
+    const seen = new Set();
+    (keys || []).forEach(k => {
+      const key = String(k);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      wanted.push(key);
+    });
+
+    // adopt the rows that are already mounted
+    const mounted = new Map();
+    Array.from(container.children).forEach(node => {
+      if (node.classList.contains("sync-empty") || node.classList.contains("sync-keep")) return;
+      const key = node.getAttribute("data-key");
+      if (key === null || mounted.has(key)) { node.remove(); changed = true; return; }
+      mounted.set(key, node);
+    });
+
+    const rows = wanted.map(key => {
+      let node = mounted.get(key);
+      if (!node) {
+        node = ensure ? ensure(key) : null;
+        if (!node) return null;
+        if (node.getAttribute("data-key") === null) node.setAttribute("data-key", key);
+        changed = true;
+      }
+      if (refresh) refresh(key, node);
+      return node;
+    });
+
+    // drop rows that are no longer wanted
+    mounted.forEach((node, key) => { if (!seen.has(key)) { node.remove(); changed = true; } });
+
+    // place the rows in order — mounted rows are never detached, so nothing
+    // re-animates and the scroll position stays where the user left it
+    let cursor = container.firstChild;
+    while (cursor && cursor.classList &&
+      (cursor.classList.contains("sync-keep") || cursor.classList.contains("sync-empty"))) {
+      cursor = cursor.nextSibling; // step over the static decorations
+    }
+    rows.forEach(node => {
+      if (!node) return;
+      if (node === cursor) { cursor = cursor.nextSibling; return; }
+      container.insertBefore(node, cursor);
+      changed = true;
+    });
+
+    // empty state
+    let mark = container.querySelector(":scope > .sync-empty");
+    if (!wanted.length && opts.empty) {
+      const sig = opts.emptySig === undefined ? null : String(opts.emptySig);
+      if (mark && sig !== null && mark.getAttribute("data-sig") !== sig) { mark.remove(); mark = null; changed = true; }
+      if (!mark) {
+        const node = U.el(opts.empty);
+        if (node) {
+          node.classList.add("sync-empty");
+          if (sig !== null) node.setAttribute("data-sig", sig);
+          container.insertBefore(node, container.firstChild);
+          changed = true;
+        }
+      }
+    } else if (mark) {
+      mark.remove();
+      changed = true;
+    }
+    return changed;
+  },
+
   // trigger a browser download from a Blob
   downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);

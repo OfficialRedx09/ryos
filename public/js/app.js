@@ -213,7 +213,12 @@ const App = {
               </div>`;
           } catch (e) { }
         }
-        batteriesDiv.innerHTML = html;
+        // Only touch the DOM when the markup really changed — re-writing an
+        // identical battery bar every 15s made the whole topbar blink.
+        if (batteriesDiv._lastHtml !== html) {
+          batteriesDiv._lastHtml = html;
+          batteriesDiv.innerHTML = html;
+        }
       }
     } catch (_) { }
   },

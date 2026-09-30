@@ -182,90 +182,134 @@ Pages.overview = {
     }
 
     /* device info */
-    const mkRow = (icon, tint, label, val, i) => `
-      <div class="ov-row" style="animation-delay:${(i * 0.04).toFixed(2)}s;">
-        ${Pages.overview._chip(icon, tint)}
-        <div class="ov-row-main">
-          <div class="ov-row-label">${U.esc(label)}</div>
-          <div class="ov-row-value">${U.esc(val)}</div>
-        </div>
-      </div>`;
-
     const infoEl = document.getElementById("ov-info");
     const infoCount = document.getElementById("ov-info-count");
     if (infoEl) {
-      if (info) {
-        infoEl.innerHTML =
-          mkRow("smartphone", "#0a84ff", "Model", info.Model || "—", 0) +
-          mkRow("branding_watermark", "#bf5af2", "Brand", info.Brand || "—", 1) +
-          mkRow("android", "#30d158", "Android", info.Android || "—", 2) +
-          mkRow("memory", "#ff9f0a", "RAM", info.Ram || "—", 3) +
-          mkRow("hard_drive", "#ff453a", "Storage", info.storage || "—", 4) +
-          mkRow("tag", "#8e8e93", "IMEI", info.Imei || "—", 5) +
-          mkRow("sim_card", "#64d2ff", "SIM 1", info.sim1_number || "—", 6) +
-          mkRow("sim_card", "#64d2ff", "SIM 2", info.sim2_number || "—", 7);
-        if (infoCount) infoCount.textContent = "8";
-      } else {
-        infoEl.innerHTML = `<div class="ov-empty">No device info reported yet.</div>`;
-        if (infoCount) infoCount.textContent = "0";
-      }
+      const specs = info ? [
+        { key: "model", icon: "smartphone", tint: "#0a84ff", label: "Model", value: info.Model || "—" },
+        { key: "brand", icon: "branding_watermark", tint: "#bf5af2", label: "Brand", value: info.Brand || "—" },
+        { key: "android", icon: "android", tint: "#30d158", label: "Android", value: info.Android || "—" },
+        { key: "ram", icon: "memory", tint: "#ff9f0a", label: "RAM", value: info.Ram || "—" },
+        { key: "storage", icon: "hard_drive", tint: "#ff453a", label: "Storage", value: info.storage || "—" },
+        { key: "imei", icon: "tag", tint: "#8e8e93", label: "IMEI", value: info.Imei || "—" },
+        { key: "sim1", icon: "sim_card", tint: "#64d2ff", label: "SIM 1", value: info.sim1_number || "—" },
+        { key: "sim2", icon: "sim_card", tint: "#64d2ff", label: "SIM 2", value: info.sim2_number || "—" },
+      ] : [];
+      const byKey = {};
+      specs.forEach((s, i) => { byKey[s.key] = s; s.i = i; });
+      U.syncList(infoEl, specs.map(s => s.key),
+        key => Pages.overview._infoRow(byKey[key]),
+        (key, node) => Pages.overview._setText(node.querySelector(".ov-row-value"), byKey[key].value),
+        { empty: `<div class="ov-empty">No device info reported yet.</div>` });
+      if (infoCount) infoCount.textContent = String(specs.length);
     }
 
     /* most used apps */
     const mostEl = document.getElementById("ov-most");
     const mostCount = document.getElementById("ov-most-count");
-    if (most && Object.keys(most).length) {
-      const colors = ["#ffd60a", "#c0c0c0", "#cd7f32"];
-      const rows = ["1st", "2nd", "3rd"].filter(k => most[k]);
-      mostEl.innerHTML = rows.map((k, i) => {
-          const label = Object.keys(most[k])[0];
-          return `
-            <div class="ov-row" style="animation-delay:${(i * 0.06).toFixed(2)}s;">
-              <span class="ov-medal" style="--ov-medal:${colors[i]}">${i + 1}</span>
-              <div class="ov-row-main">
-                <div class="ov-row-label">${U.esc(label)}</div>
-                <div class="ov-row-value ov-row-sub">${U.esc(most[k][label])}</div>
-              </div>
-            </div>`;
-        }).join("");
-      if (mostCount) mostCount.textContent = String(rows.length);
-    } else {
-      mostEl.innerHTML = `<div class="ov-empty">No usage data yet.</div>`;
-      if (mostCount) mostCount.textContent = "0";
+    const colors = ["#ffd60a", "#c0c0c0", "#cd7f32"];
+    const mostRows = (most ? ["1st", "2nd", "3rd"].filter(k => most[k]) : []).map((k, i) => {
+      const label = Object.keys(most[k])[0];
+      return { key: String(i + 1), i, rank: i + 1, label, value: most[k][label] };
+    });
+    const mostByKey = {};
+    mostRows.forEach(r => { mostByKey[r.key] = r; });
+    if (mostEl) {
+      U.syncList(mostEl, mostRows.map(r => r.key),
+        key => Pages.overview._mostRow(mostByKey[key].i),
+        (key, node) => {
+          const r = mostByKey[key];
+          const medal = node.querySelector(".ov-medal");
+          medal.style.setProperty("--ov-medal", colors[r.rank - 1]);
+          Pages.overview._setText(medal, String(r.rank));
+          Pages.overview._setText(node.querySelector(".ov-row-label"), r.label);
+          Pages.overview._setText(node.querySelector(".ov-row-value"), r.value);
+        },
+        { empty: `<div class="ov-empty">No usage data yet.</div>` });
+      if (mostCount) mostCount.textContent = String(mostRows.length);
     }
 
     /* installed apps */
     const appsEl = document.getElementById("ov-apps");
     const appsCount = document.getElementById("ov-apps-count");
-    if (apps && Object.keys(apps).length) {
-      appsEl.innerHTML = Object.entries(apps).map(([label, pkg], i) =>
-        `<div class="ov-row" style="animation-delay:${Math.min(i * 0.035, 0.42).toFixed(2)}s;">
-          ${Pages.overview._chip("apps", "#0a84ff")}
-          <div class="ov-row-main">
-            <div class="ov-row-label">${U.esc(label)}</div>
-            <div class="ov-row-value ov-row-sub">${U.esc(pkg)}</div>
-          </div>
-        </div>`).join("");
-      if (appsCount) appsCount.textContent = String(Object.keys(apps).length);
-    } else {
-      appsEl.innerHTML = `<div class="ov-empty">No app list reported yet.</div>`;
-      if (appsCount) appsCount.textContent = "0";
+    const appRows = apps ? Object.entries(apps).map(([label, pkg], i) => ({ key: "a" + i, i, label, value: pkg })) : [];
+    const appsByKey = {};
+    appRows.forEach(r => { appsByKey[r.key] = r; });
+    if (appsEl) {
+      U.syncList(appsEl, appRows.map(r => r.key),
+        key => Pages.overview._appRow(appsByKey[key].i),
+        (key, node) => {
+          const r = appsByKey[key];
+          Pages.overview._setText(node.querySelector(".ov-row-label"), r.label);
+          Pages.overview._setText(node.querySelector(".ov-row-value"), r.value);
+        },
+        { empty: `<div class="ov-empty">No app list reported yet.</div>` });
+      if (appsCount) appsCount.textContent = String(appRows.length);
     }
 
     /* error log */
     const errEl = document.getElementById("ov-errors");
     const errCount = document.getElementById("ov-errors-count");
-    if (errs && Object.keys(errs).length) {
-      errEl.innerHTML = Object.values(errs).map((m, i) =>
-        `<div class="ov-row" style="animation-delay:${(i * 0.05).toFixed(2)}s;">
-          ${Pages.overview._chip("error", "#ff453a")}
-          <div class="ov-row-main"><div class="ov-row-label">${U.esc(m)}</div></div>
-        </div>`).join("");
-      if (errCount) errCount.textContent = String(Object.keys(errs).length);
-    } else {
-      errEl.innerHTML = `<div class="ov-empty ov-empty-ok">${Pages.overview._icon("check_circle", true)} No errors reported.</div>`;
-      if (errCount) errCount.textContent = "0";
+    const errRows = Object.values(errs || {}).map((m, i) => ({ key: "e" + i, i, value: String(m) }));
+    const errByKey = {};
+    errRows.forEach(r => { errByKey[r.key] = r; });
+    if (errEl) {
+      U.syncList(errEl, errRows.map(r => r.key),
+        key => Pages.overview._errRow(errByKey[key].i),
+        (key, node) => Pages.overview._setText(node.querySelector(".ov-row-label"), errByKey[key].value),
+        { empty: `<div class="ov-empty ov-empty-ok">${Pages.overview._icon("check_circle", true)} No errors reported.</div>` });
+      if (errCount) errCount.textContent = String(errRows.length);
     }
+  },
+
+  /* ── row shells — created once per row, values are patched in place, so a
+        background poll never re-renders (and never re-animates) the list ── */
+  _infoRow(spec) {
+    const row = U.el(`
+      <div class="ov-row" style="animation-delay:${(spec.i * 0.04).toFixed(2)}s;">
+        ${Pages.overview._chip(spec.icon, spec.tint)}
+        <div class="ov-row-main">
+          <div class="ov-row-label"></div>
+          <div class="ov-row-value"></div>
+        </div>
+      </div>`);
+    row.querySelector(".ov-row-label").textContent = spec.label;
+    return row;
+  },
+
+  _mostRow(i) {
+    return U.el(`
+      <div class="ov-row" style="animation-delay:${(i * 0.06).toFixed(2)}s;">
+        <span class="ov-medal"></span>
+        <div class="ov-row-main">
+          <div class="ov-row-label"></div>
+          <div class="ov-row-value ov-row-sub"></div>
+        </div>
+      </div>`);
+  },
+
+  _appRow(i) {
+    return U.el(`
+      <div class="ov-row" style="animation-delay:${Math.min(i * 0.035, 0.42).toFixed(2)}s;">
+        ${Pages.overview._chip("apps", "#0a84ff")}
+        <div class="ov-row-main">
+          <div class="ov-row-label"></div>
+          <div class="ov-row-value ov-row-sub"></div>
+        </div>
+      </div>`);
+  },
+
+  _errRow(i) {
+    return U.el(`
+      <div class="ov-row" style="animation-delay:${(i * 0.05).toFixed(2)}s;">
+        ${Pages.overview._chip("error", "#ff453a")}
+        <div class="ov-row-main"><div class="ov-row-label"></div></div>
+      </div>`);
+  },
+
+  /* Write a value only when it really changed — keeps the DOM completely still. */
+  _setText(node, value) {
+    if (node && node.textContent !== String(value)) node.textContent = String(value);
   },
 
   destroy() {},

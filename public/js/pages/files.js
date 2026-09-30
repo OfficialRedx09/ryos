@@ -56,19 +56,22 @@ Pages.files = {
       <div id="fl-list" style="display:flex;flex-direction:column;gap:8px"><div class="skeleton"></div><div class="skeleton"></div></div>`;
     document.getElementById("fl-reload").onclick = () => Pages.files._load(id);
     Pages.files._load(id);
+    // Silent background refresh — U.syncList only patches rows that changed,
+    // so the tree never flashes while the user is browsing it.
+    App.addTimer(setInterval(() => Pages.files._load(id, true), 60000));
   },
 
-  async _load(id) {
+  async _load(id, quiet) {
     const list = document.getElementById("fl-list");
     if (!list) return;
-    list.innerHTML = `<div class="skeleton"></div><div class="skeleton" style="margin-top:8px"></div>`;
+    if (!quiet) list.innerHTML = `<div class="skeleton"></div><div class="skeleton" style="margin-top:8px"></div>`;
     try {
       const tree = await FB.get(`storage_tree/${id}`);
       Pages.files._tree = Array.isArray(tree) ? tree : Object.values(tree || {});
       Pages.files._id = id;
       Pages.files._render();
     } catch (e) {
-      if (document.getElementById("fl-list"))
+      if (!quiet && document.getElementById("fl-list"))
         list.innerHTML = `<div class="empty"><span class="material-symbols-rounded">cloud_off</span><p>Failed: ${U.esc(e.message)}</p></div>`;
     }
   },
@@ -85,25 +88,26 @@ Pages.files = {
     if (!list || !crumb) return;
     const cwd = Pages.files._cwd;
 
-    // breadcrumb
-    const parts = cwd ? cwd.split("/").filter(Boolean) : [];
-    let acc = "";
-    crumb.innerHTML = `<button data-dir="">root</button>` + parts.map(p => {
-      acc += (acc ? "/" : "") + p;
-      return `<span class="sep">/</span><button data-dir="${U.esc(acc)}">${U.esc(p)}</button>`;
-    }).join("");
-    crumb.querySelectorAll("button").forEach(b =>
-      b.onclick = () => { Pages.files._cwd = b.dataset.dir; Pages.files._render(); });
+    // breadcrumb — rebuilt only when the folder actually changed
+    if (crumb.dataset.cwd !== cwd) {
+      crumb.dataset.cwd = cwd;
+      const parts = cwd ? cwd.split("/").filter(Boolean) : [];
+      let acc = "";
+      crumb.innerHTML = `<button data-dir="">root</button>` + parts.map(p => {
+        acc += (acc ? "/" : "") + p;
+        return `<span class="sep">/</span><button data-dir="${U.esc(acc)}">${U.esc(p)}</button>`;
+      }).join("");
+      crumb.querySelectorAll("button").forEach(b =>
+        b.onclick = () => { Pages.files._cwd = b.dataset.dir; Pages.files._render(); });
+    }
 
     const nodes = Pages.files._children(cwd);
-    if (!nodes.length) {
-      list.innerHTML = `<div class="empty"><span class="material-symbols-rounded">folder_open</span><p>Empty folder (or the tree hasn't synced yet).</p></div>`;
-      return;
-    }
-    list.innerHTML = "";
-    if (Pages.files._sizesMissing()) {
-      list.insertAdjacentHTML("beforeend",
-        `<div class="card" style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px">
+
+    // "sizes not reported" hint — a static note kept next to the rows
+    const note = list.querySelector(":scope > .fl-note");
+    if (Pages.files._sizesMissing() && nodes.length) {
+      if (!note) list.insertAdjacentHTML("afterbegin",
+        `<div class="card fl-note sync-keep" style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px">
            <span class="material-symbols-rounded" style="color:var(--text-faint)">info</span>
            <div style="font-size:13px;color:var(--text-dim)">
              This device hasn't reported file sizes yet, so sizes show as “—” here.
@@ -111,28 +115,55 @@ Pages.files = {
              child app is updated (it then sends a size per file).
            </div>
          </div>`);
+    } else if (note) {
+      note.remove();
     }
-    nodes.forEach(n => {
-      const size = n.isDir ? null : Pages.files._sizeOf(n);
-      const sizeText = size === null ? "—" : U.fmtBytes(size);
-      const sizeTitle = size === null ? "Size not reported by the device (pull the file to learn it)" : U.fmtBytes(size);
-      const row = U.el(`
-        <div class="list-row">
-          <span class="material-symbols-rounded">${n.isDir ? "folder" : R2.icon(n.name)}</span>
-          <div class="list-row-main">
-            <div class="list-row-title">${U.esc(n.name)}</div>
-            ${n.isDir ? "" : `<div class="list-row-sub" title="${U.esc(sizeTitle)}">${sizeText}</div>`}
-          </div>
-          ${n.isDir ? `<span class="material-symbols-rounded" style="color:var(--text-faint)">chevron_right</span>`
-          : `<button class="btn btn-sm btn-ghost"><span class="material-symbols-rounded">download</span>Pull</button>`}
-        </div>`);
-      if (n.isDir) {
-        row.onclick = () => { Pages.files._cwd = n.path; Pages.files._render(); };
-      } else {
-        row.querySelector("button").onclick = () => Pages.files._pull(n);
-      }
-      list.appendChild(row);
-    });
+
+    const byPath = {};
+    nodes.forEach(n => { byPath[n.path] = n; });
+
+    // Rows are reused (U.syncList) — a reload only adds/patches what changed.
+    U.syncList(list, nodes.map(n => n.path),
+      path => Pages.files._row(byPath[path]),
+      (path, node) => Pages.files._fill(node, byPath[path]),
+      { empty: `<div class="empty"><span class="material-symbols-rounded">folder_open</span><p>Empty folder (or the tree hasn't synced yet).</p></div>` });
+  },
+
+  /* ── row shell (static parts built once) ── */
+  _row(n) {
+    const row = U.el(`
+      <div class="list-row">
+        <span class="material-symbols-rounded">${n.isDir ? "folder" : R2.icon(n.name)}</span>
+        <div class="list-row-main">
+          <div class="list-row-title"></div>
+          <div class="list-row-sub" data-fl="size"></div>
+        </div>
+      </div>`);
+    row.querySelector(".list-row-title").textContent = n.name;
+    if (n.isDir) {
+      row.querySelector('[data-fl="size"]').remove();
+      row.insertAdjacentHTML("beforeend", `<span class="material-symbols-rounded" style="color:var(--text-faint)">chevron_right</span>`);
+      row.onclick = () => { Pages.files._cwd = n.path; Pages.files._render(); };
+    } else {
+      row.insertAdjacentHTML("beforeend", `<button class="btn btn-sm btn-ghost"><span class="material-symbols-rounded">download</span>Pull</button>`);
+      row.querySelector("button").onclick = () => Pages.files._pull(n);
+    }
+    Pages.files._fill(row, n);
+    return row;
+  },
+
+  /* ── update only the size label (in place, no re-render) ── */
+  _fill(node, n) {
+    if (!node || !n || n.isDir) return;
+    const sizeEl = node.querySelector('[data-fl="size"]');
+    if (!sizeEl) return;
+    const size = Pages.files._sizeOf(n);
+    const sizeText = size === null ? "—" : U.fmtBytes(size);
+    const sizeTitle = size === null ? "Size not reported by the device (pull the file to learn it)" : U.fmtBytes(size);
+    if (node.dataset.sig === sizeText + "|" + sizeTitle) return;
+    node.dataset.sig = sizeText + "|" + sizeTitle;
+    if (sizeEl.textContent !== sizeText) sizeEl.textContent = sizeText;
+    if (sizeEl.title !== sizeTitle) sizeEl.title = sizeTitle;
   },
 
   async _pull(node) {
